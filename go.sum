@@ -1,2 +1,4 @@
+github.com/google/uuid v1.2.0 h1:qJYtXnJRWmpe7m/3XlyhrsLrEURqHRM2kxzoxXqyUDs=
+github.com/google/uuid v1.2.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/sijms/go-ora/v2 v2.1.20 h1:Dl9myVy4cOEOPJa+8I5z4YUwkUrJeEIOcZXElo+cWmE=
 github.com/sijms/go-ora/v2 v2.1.20/go.mod h1:VV6gER6bXMoJ4L+TvePVHUe5CAZ+VWBON4MUDIdaK98=
