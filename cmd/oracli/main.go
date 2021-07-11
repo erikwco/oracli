@@ -1,22 +1,25 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"github.com/erikwco/oracli"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
 
-	ctx := context.Background()
 	u := "SICAJA_SV"
 	p := "Claro1920"
 	srv := "172.24.2.150"
 	prt := "1521"
 	sid := "ODA_CR"
-	conn, err := oracli.NewConnection(ctx, fmt.Sprintf("oracle://%s:%s@%s:%s/%s", u, p, srv, prt, sid), "SV")
+
+	pool := oracli.NewPool()
+	pool.AddDatabase(10, 20, fmt.Sprintf("oracle://%s:%s@%s:%s/%s", u, p, srv, prt, sid), "503")
+
+	conn, err := oracli.NewConnection( fmt.Sprintf("oracle://%s:%s@%s:%s/%s", u, p, srv, prt, sid), "SV")
 
 	if err != nil {
 		fmt.Printf("Error creating connection [%s]", err.Error())
@@ -33,6 +36,11 @@ func main() {
 
 	for _, v := range result.Data {
 		fmt.Println(v)
+	}
+
+	err = conn.Ping()
+	if err != nil {
+		fmt.Printf("Error on ping [%s] \n", err.Error())
 	}
 
 	// Executing procedure with ref-cursor return
@@ -56,7 +64,7 @@ func main() {
 		fmt.Println(v)
 	}
 
-	//time.Sleep(5 * time.Second)
+	time.Sleep(5 * time.Second)
 
 
 }

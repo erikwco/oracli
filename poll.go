@@ -1,12 +1,56 @@
 package oracli
 
-type Connections map[string][]Connection
+import "github.com/google/uuid"
+
+type Database struct {
+	minConnection    int
+	maxConnection    int64
+	connectionString string
+	inUse            int
+	available        int
+	total            int
+	name             string
+	Connections      map[string]*Connection
+}
 
 type Pool struct {
-	p Connections
+	Items map[string]Database
 }
 
 func NewPool() *Pool {
-	cons := make(Connections)
-	return &Pool{p: cons}
+	// Database Container
+	p := make(map[string]Database)
+	//
+	return &Pool{Items: p}
+}
+
+func (p *Pool) AddDatabase(minConnections int, maxConnections int64, connectionString string, name string) {
+	cons := make(map[string]*Connection)
+
+	// Connections
+	for i := 0; i < minConnections; i++ {
+		con, err := NewConnection(connectionString, name)
+		if err == nil {
+			cons[uuid.New().String()] = con
+		}
+	}
+
+	// Database container
+	db := Database{
+		minConnection:    minConnections,
+		maxConnection:    maxConnections,
+		connectionString: connectionString,
+		name:             name,
+		Connections:      cons,
+	}
+
+	// Assign Database map
+	p.Items[name] = db
+}
+
+func (p *Pool) GetConnection(name string) {
+	_, ok := p.Items[name]
+	if ok {
+
+	}
 }

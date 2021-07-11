@@ -1,13 +1,24 @@
 package oracli
 
 import (
-	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
 	goOra "github.com/sijms/go-ora/v2"
 	"io"
 )
+
+// Connector interface that define a connection
+type Connector interface {
+	Select(stmt string, params []Param) Result
+	Exec(stmt string, params []Param) Result
+	BeginTx() error
+	Commit() error
+	Rollback() error
+	Close()
+	Ping() error
+	ReConnect() error
+}
 
 // ConnStatus exposes connection status
 type ConnStatus int
@@ -55,30 +66,24 @@ type Result struct {
 }
 
 // NewConnection create and open a goOra Connection
-func NewConnection(context context.Context, constr string, name string) (*Connection, error) {
+func NewConnection(constr string, name string) (*Connection, error) {
 	if constr == "" {
 		return nil, EmptyConStrErr
 	}
 
-	if name == "" {
-		name = "::GENERIC::"
-	}
-
-	conn, err := goOra.NewConnection(constr)
+	// createConnection
+	conn, err := createConnection(constr)
 	if err != nil {
-		return nil, CantCreateConnErr(err.Error())
+		return nil, err
 	}
 
-	err = conn.Open()
-	if err != nil {
-		return nil, CantOpenDbErr(err.Error())
-	}
-
-	err = conn.Ping(context)
+	// test database connection
+	err = conn.Ping(nil)
 	if err != nil {
 		return nil, TestConnErr(err.Error())
 	}
 
+	// returning connection
 	return &Connection{
 		Name:   name,
 		conn:   conn,
@@ -285,6 +290,48 @@ func (c *Connection) Close() {
 	}
 }
 
+// Ping database connection
+func (c Connection) Ping() error {
+	if c.Status == ConnClosed {
+		return errors.New("")
+	}
+
+	res := c.Select("select * from dual", nil)
+	if res.Error != nil {
+		return res.Error
+	}
+	if len(res.Data) <= 0 {
+		return errors.New("")
+	}
+	return nil
+
+}
+
+// ReConnect test a select against the database to check connection
+func (c *Connection) ReConnect() error  {
+	if c.Status == ConnOpened {
+		err := c.Ping()
+		if err != nil {
+			c.Status = ConnClosed
+			conn, err := createConnection(c.ConStr)
+			if err != nil {
+				return err
+			}
+			c.Status = ConnOpened
+			c.conn = conn
+		}
+	} else {
+		conn, err := createConnection(c.ConStr)
+		if err != nil {
+			return err
+		}
+		c.Status = ConnOpened
+		c.conn = conn
+	}
+	return nil
+
+}
+
 // prepareStatement creates a new goOra Statement
 func (c Connection) prepareStatement(statement string) *goOra.Stmt {
 	// create statement
@@ -370,4 +417,17 @@ func unwrapToRecord(columns []string, values []driver.Value) Record {
 		r[columns[i]] = c
 	}
 	return r
+}
+
+func createConnection(constr string) (*goOra.Connection, error) {
+	conn, err := goOra.NewConnection(constr)
+	if err != nil {
+		return nil, CantCreateConnErr(err.Error())
+	}
+
+	err = conn.Open()
+	if err != nil {
+		return nil, CantOpenDbErr(err.Error())
+	}
+	return conn, nil
 }
