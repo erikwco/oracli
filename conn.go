@@ -110,6 +110,7 @@ func (c Connection) Select(stmt string, params []Param) Result {
 	query := c.prepareStatement(stmt)
 	// defer closing statement
 	defer func() {
+		fmt.Println("**** Closing query ****")
 		err := query.Close()
 		if err != nil {
 			fmt.Printf("Error closing statement [%s]\n", err.Error())
@@ -133,25 +134,27 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		if cursor, ok := query.Pars[pos].Value.(goOra.RefCursor); ok {
 			// defer closing cursor
 			defer func() {
+				fmt.Println("**** Closing cursor ****")
 				err := cursor.Close()
 				if err != nil {
 					fmt.Printf("Error closing statement [%s]\n", err.Error())
 				}
 			}()
 			rows, err := cursor.Query()
+			// defer closing rows
+			defer func() {
+				fmt.Println("**** Closing rows ****")
+				err := rows.Close()
+				if err != nil {
+					fmt.Printf("Error closing statement [%s]\n", err.Error())
+				}
+			}()
 			if err != nil {
 				return Result{
 					Error:           err,
 					RecordsAffected: 0,
 				}
 			}
-			// defer closing rows
-			defer func() {
-				err := rows.Close()
-				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
-				}
-			}()
 			// return unwrapped rows
 			records, err := unwrapRows(rows)
 			rowsAffected := 0
@@ -173,12 +176,6 @@ func (c Connection) Select(stmt string, params []Param) Result {
 
 	} else {
 		rows, err := query.Query(nil)
-		if err != nil {
-			return Result{
-				Error:           err,
-				RecordsAffected: 0,
-			}
-		}
 		// defer closing rows
 		defer func() {
 			err := rows.Close()
@@ -186,6 +183,12 @@ func (c Connection) Select(stmt string, params []Param) Result {
 				fmt.Printf("Error closing statement [%s]\n", err.Error())
 			}
 		}()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+			}
+		}
 
 		// return unwrapped rows
 		records, err := unwrapRows(rows)
@@ -235,7 +238,6 @@ func (c Connection) Exec(stmt string, params []Param) Result {
 			RecordsAffected: 0,
 		}
 	}
-
 	return Result{
 		RecordsAffected: rowsAffected,
 		Error:           nil,
@@ -281,7 +283,7 @@ func (c Connection) Rollback() error {
 	}
 }
 
-// Close close the current connection
+// Close closes the current connection
 func (c *Connection) Close() {
 	c.Status = ConnClosed
 	err := c.conn.Close()
