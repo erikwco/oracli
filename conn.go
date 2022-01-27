@@ -4,8 +4,9 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	goOra "github.com/sijms/go-ora/v2"
 	"io"
+
+	goOra "github.com/sijms/go-ora/v2"
 )
 
 // Connector interface that define a connection
@@ -22,14 +23,15 @@ type Connector interface {
 
 // ConnStatus exposes connection status
 type ConnStatus int
+
 const (
 	ConnClosed ConnStatus = iota
 	ConnOpened
 )
 
 // String allow string conversion to ConnStatus
-func (cs ConnStatus) String() string  {
-	return [...]string {"ConnClosed", "ConnOpened"}[cs]
+func (cs ConnStatus) String() string {
+	return [...]string{"ConnClosed", "ConnOpened"}[cs]
 }
 
 // Connection represents an object connection for Oracle
@@ -76,7 +78,6 @@ func NewConnection(constr string, name string) (*Connection, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// test database connection
 	err = conn.Ping(nil)
 	if err != nil {
@@ -310,7 +311,7 @@ func (c Connection) Ping() error {
 }
 
 // ReConnect test a select against the database to check connection
-func (c *Connection) ReConnect() error  {
+func (c *Connection) ReConnect() error {
 	if c.Status == ConnOpened {
 		err := c.Ping()
 		if err != nil {
