@@ -1,6 +1,7 @@
 package oracli
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -50,6 +51,12 @@ type Param struct {
 	Size      int
 	Direction goOra.ParameterDirection
 	IsRef     bool
+}
+
+type params struct {
+	values []driver.Value
+	isRef  bool
+	cursor *goOra.RefCursor
 }
 
 // Record result from unwrap goOra result
@@ -104,26 +111,34 @@ func (c Connection) NewParam(name string, value driver.Value) *Param {
 	}
 }
 
-// Select takes an statement that could be a plain select or a procedure with
+func (c Connection) NewCursorParam(name string) *Param {
+	return &Param{
+		Name:      name,
+		Value:     "",
+		Size:      1000,
+		Direction: goOra.Output,
+		IsRef:     true,
+	}
+}
+
+// Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
 func (c Connection) Select(stmt string, params []Param) Result {
-	// prepare statement
-	query := c.prepareStatement(stmt)
-	// defer closing statement
-	defer func() {
-		fmt.Println("**** Closing query ****")
-		err := query.Close()
-		if err != nil {
-			fmt.Printf("Error closing statement [%s]\n", err.Error())
-		}
-	}()
 
-	// assigning parameters
-	hasRef, pos := parseParams(query, params)
+	// ***********************************************
+	// Build Param List
+	// ***********************************************
+	p := buildParamsList(params)
 
-	// check if procedure or select
-	if hasRef {
-		_, err := query.Exec(nil)
+	// ***********************************************
+	// if isRef is found execution is used
+	// ***********************************************
+	if p.isRef {
+
+		// ***********************************************
+		// execute statement
+		// ***********************************************
+		_, err := c.conn.Exec(stmt, p.values...)
 		if err != nil {
 			return Result{
 				Error:           err,
@@ -131,17 +146,26 @@ func (c Connection) Select(stmt string, params []Param) Result {
 			}
 		}
 
-		// check refCursor position
-		if cursor, ok := query.Pars[pos].Value.(goOra.RefCursor); ok {
+		// ***********************************************
+		// validate cursor information
+		// ***********************************************
+		if p.cursor != nil {
+
+			// ***********************************************
 			// defer closing cursor
+			// ***********************************************
 			defer func() {
 				fmt.Println("**** Closing cursor ****")
-				err := cursor.Close()
+				err := p.cursor.Close()
 				if err != nil {
 					fmt.Printf("Error closing statement [%s]\n", err.Error())
 				}
 			}()
-			rows, err := cursor.Query()
+
+			// ***********************************************
+			// running through query
+			// ***********************************************
+			rows, err := p.cursor.Query()
 			// defer closing rows
 			defer func() {
 				fmt.Println("**** Closing rows ****")
@@ -156,7 +180,10 @@ func (c Connection) Select(stmt string, params []Param) Result {
 					RecordsAffected: 0,
 				}
 			}
-			// return unwrapped rows
+
+			// ***********************************************
+			// unwrap rows and return
+			// ***********************************************
 			records, err := unwrapRows(rows)
 			rowsAffected := 0
 			if err == nil {
@@ -176,6 +203,33 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		}
 
 	} else {
+		// ***********************************************
+		// Select execution - prepare statement
+		// ***********************************************
+		query := c.prepareStatement(stmt)
+		// defer closing statement
+		defer func() {
+			fmt.Println("**** Closing query ****")
+			err := query.Close()
+			if err != nil {
+				fmt.Printf("Error closing statement [%s]\n", err.Error())
+			}
+		}()
+
+		// ***********************************************
+		// parameters
+		// ***********************************************
+		err := parseParams(query, params)
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+			}
+		}
+
+		// ***********************************************
+		// running select
+		// ***********************************************
 		rows, err := query.Query(nil)
 		// defer closing rows
 		defer func() {
@@ -191,7 +245,9 @@ func (c Connection) Select(stmt string, params []Param) Result {
 			}
 		}
 
-		// return unwrapped rows
+		// ***********************************************
+		// unwrapping rows
+		// ***********************************************
 		records, err := unwrapRows(rows)
 		rowsAffected := 0
 		if err == nil {
@@ -221,7 +277,13 @@ func (c Connection) Exec(stmt string, params []Param) Result {
 	}()
 
 	// parse params
-	parseParams(query, params)
+	err := parseParams(query, params)
+	if err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
 
 	// execute statement
 	rows, err := query.Exec(nil)
@@ -364,19 +426,40 @@ func newContainer() *Container {
 // parseParams take []Param and assign one by one to the statement
 // returning true if ref-cursor is found or false if not, and
 // the position when ref-cursor was found
-func parseParams(statement *goOra.Stmt, params []Param) (bool, int) {
-	hasCursor := false
-	refPosition := 0
-	for i, v := range params {
-		if v.IsRef {
-			hasCursor = true
-			refPosition = i
-			statement.AddRefCursorParam(v.Name)
-		} else {
-			statement.AddParam(v.Name, v.Value, v.Size, v.Direction)
+func parseParams(statement *goOra.Stmt, params []Param) error {
+	for _, v := range params {
+		if err := statement.AddParam(v.Name, v.Value, v.Size, v.Direction); err != nil {
+			return err
 		}
 	}
-	return hasCursor, refPosition
+	return nil
+}
+
+func buildParamsList(parameters []Param) *params {
+	l := &params{}
+	var v []driver.Value
+	var cursor goOra.RefCursor
+
+	for _, p := range parameters {
+		if p.IsRef {
+			l.isRef = true
+			l.cursor = &cursor
+			v = append(v, sql.Out{Dest: l.cursor})
+			continue
+		}
+		v = append(v, p.Value)
+	}
+	l.values = v
+	return l
+}
+
+func hasCursor(params []Param) bool {
+	for _, v := range params {
+		if v.IsRef {
+			return true
+		}
+	}
+	return false
 }
 
 // unwrapRows take driver.Rows and convert to Container
