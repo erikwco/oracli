@@ -1,9 +1,7 @@
 package oracli
 
-import "database/sql/driver"
-
 // Record result from unwrap goOra result
-type Record map[string]driver.Value
+type Record map[string]any
 
 // Container Data returned by Select
 type Container struct {
