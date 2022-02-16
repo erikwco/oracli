@@ -1,11 +1,13 @@
 package oracli
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io"
+	"log"
+	"time"
 
 	goOra "github.com/sijms/go-ora/v2"
 )
@@ -32,14 +34,14 @@ const (
 
 // String allow string conversion to ConnStatus
 func (cs ConnStatus) String() string {
-	return [...]string{"ConnClosed", "ConnOpened"}[cs]
+	return [...]string{"ConnClosed", "ConnOpened", "ConnError"}[cs]
 }
 
 // Connection represents an object connection for Oracle
 type Connection struct {
 	Name   string
 	ConStr string
-	conn   *goOra.Connection
+	conn   *sql.DB
 	tx     driver.Tx
 	Status ConnStatus
 }
@@ -53,26 +55,16 @@ type Param struct {
 	IsRef     bool
 }
 
+// params parsed params list
 type params struct {
-	values []driver.Value
+	values []any
 	isRef  bool
 	cursor *goOra.RefCursor
 }
 
-// Record result from unwrap goOra result
-type Record map[string]driver.Value
-
-// Container Data returned by Select
-type Container struct {
-	Data []Record
-}
-
-// Result unique returning type
-type Result struct {
-	*Container
-	Error           error
-	RecordsAffected int64
-}
+// *****************************************************
+// Public
+// *****************************************************
 
 // NewConnection create and open a goOra Connection
 func NewConnection(constr string, name string) (*Connection, error) {
@@ -84,11 +76,6 @@ func NewConnection(constr string, name string) (*Connection, error) {
 	conn, err := createConnection(constr)
 	if err != nil {
 		return nil, err
-	}
-	// test database connection
-	err = conn.Ping(nil)
-	if err != nil {
-		return nil, TestConnErr(err.Error())
 	}
 
 	// returning connection
@@ -123,7 +110,7 @@ func (c Connection) NewCursorParam(name string) *Param {
 
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
-func (c Connection) Select(stmt string, params []Param) Result {
+func (c Connection) Select(stmt string, params []*Param) Result {
 
 	// ***********************************************
 	// Build Param List
@@ -150,36 +137,37 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		// validate cursor information
 		// ***********************************************
 		if p.cursor != nil {
-
 			// ***********************************************
 			// defer closing cursor
 			// ***********************************************
-			defer func() {
-				fmt.Println("**** Closing cursor ****")
-				err := p.cursor.Close()
-				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
+			defer func(c *goOra.RefCursor) {
+				if c != nil {
+					err := c.Close()
+					if err != nil {
+						fmt.Printf("Error closing statement [%s]\n", err.Error())
+					}
 				}
-			}()
+			}(p.cursor)
 
 			// ***********************************************
 			// running through query
 			// ***********************************************
+
 			rows, err := p.cursor.Query()
-			// defer closing rows
-			defer func() {
-				fmt.Println("**** Closing rows ****")
-				err := rows.Close()
-				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
-				}
-			}()
 			if err != nil {
 				return Result{
 					Error:           err,
 					RecordsAffected: 0,
 				}
 			}
+
+			// defer closing rows
+			defer func() {
+				err := rows.Close()
+				if err != nil {
+					fmt.Printf("Error closing statement [%s]\n", err.Error())
+				}
+			}()
 
 			// ***********************************************
 			// unwrap rows and return
@@ -206,38 +194,30 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		// ***********************************************
 		// Select execution - prepare statement
 		// ***********************************************
-		query := c.prepareStatement(stmt)
-		// defer closing statement
-		defer func() {
-			fmt.Println("**** Closing query ****")
-			err := query.Close()
-			if err != nil {
-				fmt.Printf("Error closing statement [%s]\n", err.Error())
-			}
-		}()
-
-		// ***********************************************
-		// parameters
-		// ***********************************************
-		err := parseParams(query, params)
+		query, err := c.prepareStatement(stmt)
 		if err != nil {
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
 			}
 		}
+
+		// defer closing statement
+		defer func(s *sql.Stmt) {
+			//fmt.Println("**** Closing query ****")
+			err := s.Close()
+			if err != nil {
+				fmt.Printf("Error closing statement [%s]\n", err.Error())
+			}
+		}(query)
 
 		// ***********************************************
 		// running select
 		// ***********************************************
-		rows, err := query.Query(nil)
-		// defer closing rows
-		defer func() {
-			err := rows.Close()
-			if err != nil {
-				fmt.Printf("Error closing statement [%s]\n", err.Error())
-			}
-		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
 			return Result{
 				Error:           err,
@@ -245,10 +225,19 @@ func (c Connection) Select(stmt string, params []Param) Result {
 			}
 		}
 
+		// defer closing rows
+		defer func(r *sql.Rows) {
+			err := r.Close()
+			if err != nil {
+				fmt.Printf("Error closing statement [%s]\n", err.Error())
+			}
+		}(rows)
+
+		///rows.Next()
 		// ***********************************************
 		// unwrapping rows
 		// ***********************************************
-		records, err := unwrapRows(rows)
+		records, err := unwrapRowsSql(rows)
 		rowsAffected := 0
 		if err == nil {
 			rowsAffected = len(records.Data)
@@ -265,9 +254,9 @@ func (c Connection) Select(stmt string, params []Param) Result {
 
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
-func (c Connection) Exec(stmt string, params []Param) Result {
+func (c Connection) Exec(stmt string, params []*Param) Result {
 	// prepare statement
-	query := c.prepareStatement(stmt)
+	query, err := c.prepareStatement(stmt)
 	// defer closing statement
 	defer func() {
 		err := query.Close()
@@ -277,16 +266,13 @@ func (c Connection) Exec(stmt string, params []Param) Result {
 	}()
 
 	// parse params
-	err := parseParams(query, params)
-	if err != nil {
-		return Result{
-			Error:           err,
-			RecordsAffected: 0,
-		}
-	}
+	p := buildParamsList(params)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// execute statement
-	rows, err := query.Exec(nil)
+	rows, err := query.ExecContext(ctx, p.values...)
 	if err != nil {
 		return Result{
 			Error:           err,
@@ -310,10 +296,6 @@ func (c Connection) Exec(stmt string, params []Param) Result {
 
 // BeginTx start a new transaction to allow commit or rollback
 func (c *Connection) BeginTx() error {
-	// check if connection is open
-	if c.conn.State != goOra.Opened {
-		return errors.New("connection closed transaction can not be created")
-	}
 	// starting transaction
 	tx, err := c.conn.Begin()
 	if err != nil {
@@ -357,19 +339,17 @@ func (c *Connection) Close() {
 
 // Ping database connection
 func (c Connection) Ping() error {
-	if c.Status == ConnClosed {
-		return errors.New("")
+	// test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// ping connection
+	err := c.conn.PingContext(ctx)
+	if err != nil {
+		return CantPingConnection(err.Error())
 	}
 
-	res := c.Select("select * from dual", nil)
-	if res.Error != nil {
-		return res.Error
-	}
-	if len(res.Data) <= 0 {
-		return errors.New("")
-	}
 	return nil
-
 }
 
 // ReConnect test a select against the database to check connection
@@ -397,15 +377,25 @@ func (c *Connection) ReConnect() error {
 
 }
 
+// GetConnection creates and individual connection
+func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+	return c.conn.Conn(context)
+}
+
+// *****************************************************
+// Private
+// *****************************************************
+
 // prepareStatement creates a new goOra Statement
-func (c Connection) prepareStatement(statement string) *goOra.Stmt {
+func (c Connection) prepareStatement(statement string) (*sql.Stmt, error) {
 	// create statement
-	return goOra.NewStmt(statement, c.conn)
+	return c.conn.Prepare(statement)
+	//return goOra.NewStmt(statement, c.conn)
 }
 
 // addToRows take the rows from the result and append the result
 // to Container.Data
-func (c *Container) addToRows(columns []string, rows []driver.Value) {
+func (c *Container) addToRows(columns []string, rows []any) {
 	// if full create a new one before add new one
 	if len(c.Data) == cap(c.Data) {
 		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
@@ -416,6 +406,18 @@ func (c *Container) addToRows(columns []string, rows []driver.Value) {
 	c.Data = append(c.Data, unwrapToRecord(columns, rows))
 }
 
+func (c *Container) addToRowsString(columns []string, rows []string) {
+	// if full create a new one before add new one
+	if len(c.Data) == cap(c.Data) {
+		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
+		copy(expanded, c.Data)
+		c.Data = expanded
+	}
+	// add new data
+	c.Data = append(c.Data, unwrapToRecordString(columns, rows))
+
+}
+
 // newContainer creates a new Container
 func newContainer() *Container {
 	return &Container{
@@ -423,21 +425,10 @@ func newContainer() *Container {
 	}
 }
 
-// parseParams take []Param and assign one by one to the statement
-// returning true if ref-cursor is found or false if not, and
-// the position when ref-cursor was found
-func parseParams(statement *goOra.Stmt, params []Param) error {
-	for _, v := range params {
-		if err := statement.AddParam(v.Name, v.Value, v.Size, v.Direction); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func buildParamsList(parameters []Param) *params {
+// buildParamsList
+func buildParamsList(parameters []*Param) *params {
 	l := &params{}
-	var v []driver.Value
+	var v []any
 	var cursor goOra.RefCursor
 
 	for _, p := range parameters {
@@ -453,17 +444,8 @@ func buildParamsList(parameters []Param) *params {
 	return l
 }
 
-func hasCursor(params []Param) bool {
-	for _, v := range params {
-		if v.IsRef {
-			return true
-		}
-	}
-	return false
-}
-
-// unwrapRows take driver.Rows and convert to Container
-func unwrapRows(rows driver.Rows) (*Container, error) {
+// unwrapRows take *goOra.DataSet and convert to Container
+func unwrapRows(rows *goOra.DataSet) (*Container, error) {
 	// closing rows
 	defer func() {
 		err := rows.Close()
@@ -478,18 +460,56 @@ func unwrapRows(rows driver.Rows) (*Container, error) {
 
 	// Get columns name
 	columns := rows.Columns()
-	values := make([]driver.Value, len(columns))
+	values := make([]string, len(columns))
+	columnPointers := make([]interface{}, len(columns))
+	for i := range values {
+		columnPointers[i] = &values[i]
+	}
 
 	// running records
-	for {
-		err = rows.Next(values)
+	for rows.Next_() {
+		if err = rows.Scan(columnPointers...); err != nil {
+			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
+		}
+		container.addToRowsString(columns, values)
+	}
+
+	// returning data
+	return container, nil
+}
+
+// unwrapRowsSql takes sql.Rows and convert to Container
+func unwrapRowsSql(rows *sql.Rows) (*Container, error) {
+	// closing rows
+	defer func() {
+		err := rows.Close()
 		if err != nil {
-			break
+			fmt.Printf("Error closing statement [%s]\n", err.Error())
+		}
+	}()
+
+	// Container
+	container := newContainer()
+	var err error
+
+	// Get columns name
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	values := make([]any, len(columns))
+	columnPointers := make([]any, len(columns))
+	for i := range values {
+		columnPointers[i] = &values[i]
+	}
+
+	// running records
+	for rows.Next() {
+		if err = rows.Scan(columnPointers...); err != nil {
+			log.Printf("unwrapRowSQL - 7 - [%v]", err)
+			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 		}
 		container.addToRows(columns, values)
-	}
-	if err != io.EOF {
-		return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 	}
 
 	// returning data
@@ -497,7 +517,7 @@ func unwrapRows(rows driver.Rows) (*Container, error) {
 }
 
 // unwrapToRecord take every row and create a new Record
-func unwrapToRecord(columns []string, values []driver.Value) Record {
+func unwrapToRecord(columns []string, values []any) Record {
 	r := make(Record)
 	for i, c := range values {
 		r[columns[i]] = c
@@ -505,15 +525,40 @@ func unwrapToRecord(columns []string, values []driver.Value) Record {
 	return r
 }
 
-func createConnection(constr string) (*goOra.Connection, error) {
-	conn, err := goOra.NewConnection(constr)
+// unwrapToRecord take every row and create a new Record
+func unwrapToRecordString(columns []string, values []string) Record {
+	r := make(Record)
+	for i, c := range values {
+		r[columns[i]] = c
+	}
+	return r
+}
+
+// createConnection
+func createConnection(constr string) (*sql.DB, error) {
+	//conn, err := goOra.NewConnection(constr)
+
+	// Open connection via sql.Open interface
+	conn, err := sql.Open("oracle", constr)
 	if err != nil {
 		return nil, CantCreateConnErr(err.Error())
 	}
 
-	err = conn.Open()
+	// set limits
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(10)
+	conn.SetConnMaxIdleTime(3 * time.Second)
+	conn.SetConnMaxLifetime(3 * time.Second)
+
+	// test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// ping connection
+	err = conn.PingContext(ctx)
 	if err != nil {
-		return nil, CantOpenDbErr(err.Error())
+		return nil, CantPingConnection(err.Error())
 	}
+
 	return conn, nil
 }
