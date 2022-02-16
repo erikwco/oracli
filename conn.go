@@ -6,7 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io"
+	"log"
 	"time"
 
 	goOra "github.com/sijms/go-ora/v2"
@@ -24,20 +24,12 @@ type Connector interface {
 	ReConnect() error
 }
 
-//type wrapper interface {
-//	*goOra.DataSet | *sql.Rows
-//	Close() error
-//	Next()
-//	Columns() []string
-//}
-
 // ConnStatus exposes connection status
 type ConnStatus int
 
 const (
 	ConnClosed ConnStatus = iota
 	ConnOpened
-	ConnError
 )
 
 // String allow string conversion to ConnStatus
@@ -118,7 +110,7 @@ func (c Connection) NewCursorParam(name string) *Param {
 
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
-func (c Connection) Select(stmt string, params []Param) Result {
+func (c Connection) Select(stmt string, params []*Param) Result {
 
 	// ***********************************************
 	// Build Param List
@@ -145,36 +137,37 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		// validate cursor information
 		// ***********************************************
 		if p.cursor != nil {
-
 			// ***********************************************
 			// defer closing cursor
 			// ***********************************************
-			defer func() {
-				fmt.Println("**** Closing cursor ****")
-				err := p.cursor.Close()
-				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
+			defer func(c *goOra.RefCursor) {
+				if c != nil {
+					err := c.Close()
+					if err != nil {
+						fmt.Printf("Error closing statement [%s]\n", err.Error())
+					}
 				}
-			}()
+			}(p.cursor)
 
 			// ***********************************************
 			// running through query
 			// ***********************************************
+
 			rows, err := p.cursor.Query()
-			// defer closing rows
-			defer func() {
-				fmt.Println("**** Closing rows ****")
-				err := rows.Close()
-				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
-				}
-			}()
 			if err != nil {
 				return Result{
 					Error:           err,
 					RecordsAffected: 0,
 				}
 			}
+
+			// defer closing rows
+			defer func() {
+				err := rows.Close()
+				if err != nil {
+					fmt.Printf("Error closing statement [%s]\n", err.Error())
+				}
+			}()
 
 			// ***********************************************
 			// unwrap rows and return
@@ -211,7 +204,7 @@ func (c Connection) Select(stmt string, params []Param) Result {
 
 		// defer closing statement
 		defer func(s *sql.Stmt) {
-			fmt.Println("**** Closing query ****")
+			//fmt.Println("**** Closing query ****")
 			err := s.Close()
 			if err != nil {
 				fmt.Printf("Error closing statement [%s]\n", err.Error())
@@ -221,20 +214,25 @@ func (c Connection) Select(stmt string, params []Param) Result {
 		// ***********************************************
 		// running select
 		// ***********************************************
-		rows, err := query.Query(p.values...)
-		// defer closing rows
-		defer func() {
-			err := rows.Close()
-			if err != nil {
-				fmt.Printf("Error closing statement [%s]\n", err.Error())
-			}
-		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
 			}
 		}
+
+		// defer closing rows
+		defer func(r *sql.Rows) {
+			err := r.Close()
+			if err != nil {
+				fmt.Printf("Error closing statement [%s]\n", err.Error())
+			}
+		}(rows)
+
 		///rows.Next()
 		// ***********************************************
 		// unwrapping rows
@@ -256,7 +254,7 @@ func (c Connection) Select(stmt string, params []Param) Result {
 
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
-func (c Connection) Exec(stmt string, params []Param) Result {
+func (c Connection) Exec(stmt string, params []*Param) Result {
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
 	// defer closing statement
@@ -270,8 +268,11 @@ func (c Connection) Exec(stmt string, params []Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// execute statement
-	rows, err := query.Exec(p.values...)
+	rows, err := query.ExecContext(ctx, p.values...)
 	if err != nil {
 		return Result{
 			Error:           err,
@@ -338,19 +339,17 @@ func (c *Connection) Close() {
 
 // Ping database connection
 func (c Connection) Ping() error {
-	if c.Status == ConnClosed {
-		return errors.New("")
+	// test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// ping connection
+	err := c.conn.PingContext(ctx)
+	if err != nil {
+		return CantPingConnection(err.Error())
 	}
 
-	res := c.Select("select * from dual", nil)
-	if res.Error != nil {
-		return res.Error
-	}
-	if len(res.Data) <= 0 {
-		return errors.New("")
-	}
 	return nil
-
 }
 
 // ReConnect test a select against the database to check connection
@@ -378,6 +377,11 @@ func (c *Connection) ReConnect() error {
 
 }
 
+// GetConnection creates and individual connection
+func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+	return c.conn.Conn(context)
+}
+
 // *****************************************************
 // Private
 // *****************************************************
@@ -391,7 +395,7 @@ func (c Connection) prepareStatement(statement string) (*sql.Stmt, error) {
 
 // addToRows take the rows from the result and append the result
 // to Container.Data
-func (c *Container) addToRows(columns []string, rows []driver.Value) {
+func (c *Container) addToRows(columns []string, rows []any) {
 	// if full create a new one before add new one
 	if len(c.Data) == cap(c.Data) {
 		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
@@ -402,6 +406,18 @@ func (c *Container) addToRows(columns []string, rows []driver.Value) {
 	c.Data = append(c.Data, unwrapToRecord(columns, rows))
 }
 
+func (c *Container) addToRowsString(columns []string, rows []string) {
+	// if full create a new one before add new one
+	if len(c.Data) == cap(c.Data) {
+		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
+		copy(expanded, c.Data)
+		c.Data = expanded
+	}
+	// add new data
+	c.Data = append(c.Data, unwrapToRecordString(columns, rows))
+
+}
+
 // newContainer creates a new Container
 func newContainer() *Container {
 	return &Container{
@@ -410,7 +426,7 @@ func newContainer() *Container {
 }
 
 // buildParamsList
-func buildParamsList(parameters []Param) *params {
+func buildParamsList(parameters []*Param) *params {
 	l := &params{}
 	var v []any
 	var cursor goOra.RefCursor
@@ -444,18 +460,18 @@ func unwrapRows(rows *goOra.DataSet) (*Container, error) {
 
 	// Get columns name
 	columns := rows.Columns()
-	values := make([]driver.Value, len(columns))
+	values := make([]string, len(columns))
+	columnPointers := make([]interface{}, len(columns))
+	for i := range values {
+		columnPointers[i] = &values[i]
+	}
 
 	// running records
-	for {
-		err = rows.Next(values)
-		if err != nil {
-			break
+	for rows.Next_() {
+		if err = rows.Scan(columnPointers...); err != nil {
+			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 		}
-		container.addToRows(columns, values)
-	}
-	if err != io.EOF {
-		return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
+		container.addToRowsString(columns, values)
 	}
 
 	// returning data
@@ -481,18 +497,19 @@ func unwrapRowsSql(rows *sql.Rows) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	values := make([]driver.Value, len(columns))
+	values := make([]any, len(columns))
+	columnPointers := make([]any, len(columns))
+	for i := range values {
+		columnPointers[i] = &values[i]
+	}
 
 	// running records
-	for {
-		err = rows.Scan(values)
-		if err != nil {
-			break
+	for rows.Next() {
+		if err = rows.Scan(columnPointers...); err != nil {
+			log.Printf("unwrapRowSQL - 7 - [%v]", err)
+			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 		}
 		container.addToRows(columns, values)
-	}
-	if err != io.EOF {
-		return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 	}
 
 	// returning data
@@ -500,7 +517,16 @@ func unwrapRowsSql(rows *sql.Rows) (*Container, error) {
 }
 
 // unwrapToRecord take every row and create a new Record
-func unwrapToRecord(columns []string, values []driver.Value) Record {
+func unwrapToRecord(columns []string, values []any) Record {
+	r := make(Record)
+	for i, c := range values {
+		r[columns[i]] = c
+	}
+	return r
+}
+
+// unwrapToRecord take every row and create a new Record
+func unwrapToRecordString(columns []string, values []string) Record {
 	r := make(Record)
 	for i, c := range values {
 		r[columns[i]] = c
@@ -519,8 +545,10 @@ func createConnection(constr string) (*sql.DB, error) {
 	}
 
 	// set limits
-	conn.SetMaxOpenConns(5)
-	conn.SetMaxIdleConns(5)
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(10)
+	conn.SetConnMaxIdleTime(3 * time.Second)
+	conn.SetConnMaxLifetime(3 * time.Second)
 
 	// test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
