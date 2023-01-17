@@ -254,9 +254,9 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 }
 
 func (c Connection) ExecuteDDL(stmt string) Result {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	result, err := c.conn.ExecContext(ctx, stmt)
+	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	//defer cancel()
+	result, err := c.conn.Exec(stmt)
 	if err != nil {
 		return Result{
 			Error:           err,
