@@ -125,6 +125,7 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		// execute statement
 		// ***********************************************
+		fmt.Println(stmt)
 		_, err := c.conn.Exec(stmt, p.values...)
 		if err != nil {
 			return Result{
@@ -252,6 +253,32 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 
 }
 
+func (c Connection) ExecuteDDL(stmt string) Result {
+	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	//defer cancel()
+	result, err := c.conn.Exec(stmt)
+	if err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
+
+	ra, err := result.RowsAffected()
+	if err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
+
+	return Result{
+		Error:           nil,
+		RecordsAffected: ra,
+	}
+
+}
+
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
 func (c Connection) Exec(stmt string, params []*Param) Result {
@@ -295,7 +322,7 @@ func (c Connection) Exec(stmt string, params []*Param) Result {
 }
 
 // BeginTx start a new transaction to allow commit or rollback
-func (c *Connection) BeginTx() error {
+func (c Connection) BeginTx() error {
 	// starting transaction
 	tx, err := c.conn.Begin()
 	if err != nil {
@@ -329,7 +356,7 @@ func (c Connection) Rollback() error {
 }
 
 // Close closes the current connection
-func (c *Connection) Close() {
+func (c Connection) Close() {
 	c.Status = ConnClosed
 	err := c.conn.Close()
 	if err != nil {
@@ -353,7 +380,7 @@ func (c Connection) Ping() error {
 }
 
 // ReConnect test a select against the database to check connection
-func (c *Connection) ReConnect() error {
+func (c Connection) ReConnect() error {
 	if c.Status == ConnOpened {
 		err := c.Ping()
 		if err != nil {
@@ -378,7 +405,7 @@ func (c *Connection) ReConnect() error {
 }
 
 // GetConnection creates and individual connection
-func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+func (c Connection) GetConnection(context context.Context) (*sql.Conn, error) {
 	return c.conn.Conn(context)
 }
 
