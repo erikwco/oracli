@@ -66,6 +66,11 @@ type params struct {
 // Public
 // *****************************************************
 
+func NewConnectionWithParams(server string, port int, user string, password string, service string, options map[string]string, name string) (*Connection, error) {
+	conStr := goOra.BuildUrl(server, port, service, user, password, options)
+	return NewConnection(conStr, name)
+}
+
 // NewConnection create and open a goOra Connection
 func NewConnection(constr string, name string) (*Connection, error) {
 	if constr == "" {
