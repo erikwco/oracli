@@ -579,11 +579,11 @@ func createConnection(constr string) (*sql.DB, error) {
 	// set limits
 	conn.SetMaxOpenConns(50)
 	conn.SetMaxIdleConns(10)
-	conn.SetConnMaxIdleTime(3 * time.Second)
-	conn.SetConnMaxLifetime(3 * time.Second)
+	//conn.SetConnMaxIdleTime(3 * time.Second)
+	//conn.SetConnMaxLifetime(3 * time.Second)
 
 	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// ping connection
