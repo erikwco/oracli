@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"github.com/mitchellh/mapstructure"
 	"log"
 	"time"
 
@@ -111,6 +112,16 @@ func (c Connection) NewCursorParam(name string) *Param {
 		Direction: goOra.Output,
 		IsRef:     true,
 	}
+}
+
+// Parser converts Result object to structure
+func Parser[T any](source Result) ([]T, error) {
+	var data []T
+	err := mapstructure.Decode(source.Data, &data)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // Select takes a statement that could be a plain select or a procedure with
