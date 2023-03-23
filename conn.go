@@ -66,6 +66,7 @@ type params struct {
 // Public
 // *****************************************************
 
+// NewConnectionWithParams Conexión con parámetros nombrados
 func NewConnectionWithParams(server string, port int, user string, password string, service string, options map[string]string, name string) (*Connection, error) {
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
 	return NewConnection(conStr, name)
@@ -103,6 +104,7 @@ func (c Connection) NewParam(name string, value driver.Value) *Param {
 	}
 }
 
+// NewCursorParam cursor para parámetros
 func (c Connection) NewCursorParam(name string) *Param {
 	return &Param{
 		Name:      name,
