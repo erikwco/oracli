@@ -1,7 +1,5 @@
 package oracli
 
-import "github.com/google/uuid"
-
 type Database struct {
 	minConnection    int
 	maxConnection    int64
@@ -28,12 +26,12 @@ func (p *Pool) AddDatabase(minConnections int, maxConnections int64, connectionS
 	cons := make(map[string]*Connection)
 
 	// Connections
-	for i := 0; i < minConnections; i++ {
-		con, err := NewConnection(connectionString, name)
-		if err == nil {
-			cons[uuid.New().String()] = con
-		}
-	}
+	//for i := 0; i < minConnections; i++ {
+	//	con, err := NewConnection(connectionString, name)
+	//	if err == nil {
+	//		//cons[uuid] = con
+	//	}
+	//}
 
 	// Database container
 	db := Database{
