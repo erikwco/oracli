@@ -117,11 +117,12 @@ func (c Connection) NewCursorParam(name string) *Param {
 }
 
 // Parser converts Result object to structure
-func Parser[T any](source Result) ([]T, error) {
-	var data []T
+func Parser[T any](source Result) (T, error) {
+	var empty T
+	var data T
 	err := mapstructure.Decode(source.Data, &data)
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	return data, nil
 }
