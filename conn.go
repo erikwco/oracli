@@ -132,6 +132,20 @@ func Parser[T any](source Result) (T, error) {
 func (c Connection) Select(stmt string, params []*Param) Result {
 
 	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
+	// ***********************************************
 	// Build Param List
 	// ***********************************************
 	p := buildParamsList(params)
@@ -273,6 +287,20 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 }
 
 func (c Connection) ExecuteDDL(stmt string) Result {
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
 	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	//defer cancel()
 	result, err := c.conn.Exec(stmt)
@@ -301,6 +329,20 @@ func (c Connection) ExecuteDDL(stmt string) Result {
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
 func (c Connection) Exec(stmt string, params []*Param) Result {
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
 	// defer closing statement
