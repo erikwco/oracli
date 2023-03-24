@@ -426,7 +426,7 @@ func (c *Connection) Close() {
 }
 
 // Ping database connection
-func (c Connection) Ping() error {
+func (c *Connection) Ping() error {
 	// test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -434,9 +434,10 @@ func (c Connection) Ping() error {
 	// ping connection
 	err := c.conn.PingContext(ctx)
 	if err != nil {
+		c.Status = ConnClosed
 		return CantPingConnection(err.Error())
 	}
-
+	c.Status = ConnOpened
 	return nil
 }
 
@@ -454,6 +455,7 @@ func (c *Connection) ReConnect() error {
 			c.conn = conn
 		}
 	} else {
+		c.Status = ConnClosed
 		conn, err := createConnection(c.ConStr)
 		if err != nil {
 			return err
