@@ -375,7 +375,7 @@ func (c Connection) Rollback() error {
 }
 
 // Close closes the current connection
-func (c Connection) Close() {
+func (c *Connection) Close() {
 	c.Status = ConnClosed
 	err := c.conn.Close()
 	if err != nil {
@@ -399,7 +399,7 @@ func (c Connection) Ping() error {
 }
 
 // ReConnect test a select against the database to check connection
-func (c Connection) ReConnect() error {
+func (c *Connection) ReConnect() error {
 	if c.Status == ConnOpened {
 		err := c.Ping()
 		if err != nil {
