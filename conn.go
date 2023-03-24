@@ -129,7 +129,7 @@ func Parser[T any](source Result) (T, error) {
 
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
-func (c Connection) Select(stmt string, params []*Param) Result {
+func (c *Connection) Select(stmt string, params []*Param) Result {
 
 	// ***********************************************
 	// Evaluando conexión
@@ -286,7 +286,7 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 
 }
 
-func (c Connection) ExecuteDDL(stmt string) Result {
+func (c *Connection) ExecuteDDL(stmt string) Result {
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
@@ -328,7 +328,7 @@ func (c Connection) ExecuteDDL(stmt string) Result {
 
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
-func (c Connection) Exec(stmt string, params []*Param) Result {
+func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
@@ -428,7 +428,7 @@ func (c *Connection) Close() {
 // Ping database connection
 func (c *Connection) Ping() error {
 	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// ping connection
