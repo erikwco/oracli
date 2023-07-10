@@ -215,6 +215,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 				Container:       records,
 				Error:           err,
 				RecordsAffected: int64(rowsAffected),
+				HasData:         rowsAffected > 0,
 			}
 
 		} else {
@@ -280,6 +281,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			Container:       records,
 			Error:           err,
 			RecordsAffected: int64(rowsAffected),
+			HasData:         rowsAffected > 0,
 		}
 
 	}
@@ -378,6 +380,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	return Result{
 		RecordsAffected: rowsAffected,
 		Error:           nil,
+		HasData:         rowsAffected > 0,
 	}
 
 }
