@@ -228,6 +228,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		// Select execution - prepare statement
 		// ***********************************************
+		log.Printf("Statement: %v", stmt)
 		query, err := c.prepareStatement(stmt)
 		if err != nil {
 			return Result{
@@ -238,7 +239,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 
 		// defer closing statement
 		defer func(s *sql.Stmt) {
-			//fmt.Println("**** Closing query ****")
+			log.Println("**** Closing query ****")
 			err := s.Close()
 			if err != nil {
 				fmt.Printf("Error closing statement [%s]\n", err.Error())
@@ -280,6 +281,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			Container:       records,
 			Error:           err,
 			RecordsAffected: int64(rowsAffected),
+			HasData:         rowsAffected > 0,
 		}
 
 	}
