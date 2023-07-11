@@ -13,4 +13,5 @@ type Result struct {
 	*Container
 	Error           error
 	RecordsAffected int64
+	HasData         bool
 }

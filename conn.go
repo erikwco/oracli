@@ -67,6 +67,7 @@ type params struct {
 // Public
 // *****************************************************
 
+// NewConnectionWithParams Conexión con parámetros nombrados
 func NewConnectionWithParams(server string, port int, user string, password string, service string, options map[string]string, name string) (*Connection, error) {
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
 	return NewConnection(conStr, name)
@@ -94,7 +95,7 @@ func NewConnection(constr string, name string) (*Connection, error) {
 }
 
 // NewParam creates and fill a new Param
-func (c Connection) NewParam(name string, value driver.Value) *Param {
+func (c *Connection) NewParam(name string, value driver.Value) *Param {
 	return &Param{
 		Name:      name,
 		Value:     value,
@@ -104,7 +105,8 @@ func (c Connection) NewParam(name string, value driver.Value) *Param {
 	}
 }
 
-func (c Connection) NewCursorParam(name string) *Param {
+// NewCursorParam cursor para parámetros
+func (c *Connection) NewCursorParam(name string) *Param {
 	return &Param{
 		Name:      name,
 		Value:     "",
@@ -115,18 +117,33 @@ func (c Connection) NewCursorParam(name string) *Param {
 }
 
 // Parser converts Result object to structure
-func Parser[T any](source Result) ([]T, error) {
-	var data []T
+func Parser[T any](source Result) (T, error) {
+	var empty T
+	var data T
 	err := mapstructure.Decode(source.Data, &data)
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	return data, nil
 }
 
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
-func (c Connection) Select(stmt string, params []*Param) Result {
+func (c *Connection) Select(stmt string, params []*Param) Result {
+
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
 
 	// ***********************************************
 	// Build Param List
@@ -198,6 +215,7 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 				Container:       records,
 				Error:           err,
 				RecordsAffected: int64(rowsAffected),
+				HasData:         rowsAffected > 0,
 			}
 
 		} else {
@@ -233,7 +251,6 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
 		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
 			return Result{
@@ -263,13 +280,28 @@ func (c Connection) Select(stmt string, params []*Param) Result {
 			Container:       records,
 			Error:           err,
 			RecordsAffected: int64(rowsAffected),
+			HasData:         rowsAffected > 0,
 		}
 
 	}
 
 }
 
-func (c Connection) ExecuteDDL(stmt string) Result {
+func (c *Connection) ExecuteDDL(stmt string) Result {
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
 	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	//defer cancel()
 	result, err := c.conn.Exec(stmt)
@@ -297,7 +329,21 @@ func (c Connection) ExecuteDDL(stmt string) Result {
 
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
-func (c Connection) Exec(stmt string, params []*Param) Result {
+func (c *Connection) Exec(stmt string, params []*Param) Result {
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Status == ConnClosed || c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
 	// defer closing statement
@@ -333,12 +379,13 @@ func (c Connection) Exec(stmt string, params []*Param) Result {
 	return Result{
 		RecordsAffected: rowsAffected,
 		Error:           nil,
+		HasData:         rowsAffected > 0,
 	}
 
 }
 
 // BeginTx start a new transaction to allow commit or rollback
-func (c Connection) BeginTx() error {
+func (c *Connection) BeginTx() error {
 	// starting transaction
 	tx, err := c.conn.Begin()
 	if err != nil {
@@ -351,7 +398,7 @@ func (c Connection) BeginTx() error {
 
 // Commit set commit to the current transaction
 // if exists
-func (c Connection) Commit() error {
+func (c *Connection) Commit() error {
 	if c.tx != nil {
 		return c.tx.Commit()
 	} else {
@@ -362,7 +409,7 @@ func (c Connection) Commit() error {
 
 // Rollback set rollback to the current transaction
 // if exists
-func (c Connection) Rollback() error {
+func (c *Connection) Rollback() error {
 	if c.tx != nil {
 		return c.tx.Rollback()
 	} else {
@@ -372,31 +419,33 @@ func (c Connection) Rollback() error {
 }
 
 // Close closes the current connection
-func (c Connection) Close() {
+func (c *Connection) Close() {
 	c.Status = ConnClosed
 	err := c.conn.Close()
 	if err != nil {
 		fmt.Printf("Error closing connection [%s]", err.Error())
 	}
+
 }
 
 // Ping database connection
-func (c Connection) Ping() error {
+func (c *Connection) Ping() error {
 	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// ping connection
 	err := c.conn.PingContext(ctx)
 	if err != nil {
+		c.Status = ConnClosed
 		return CantPingConnection(err.Error())
 	}
-
+	c.Status = ConnOpened
 	return nil
 }
 
 // ReConnect test a select against the database to check connection
-func (c Connection) ReConnect() error {
+func (c *Connection) ReConnect() error {
 	if c.Status == ConnOpened {
 		err := c.Ping()
 		if err != nil {
@@ -409,6 +458,7 @@ func (c Connection) ReConnect() error {
 			c.conn = conn
 		}
 	} else {
+		c.Status = ConnClosed
 		conn, err := createConnection(c.ConStr)
 		if err != nil {
 			return err
@@ -421,7 +471,8 @@ func (c Connection) ReConnect() error {
 }
 
 // GetConnection creates and individual connection
-func (c Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+
 	return c.conn.Conn(context)
 }
 
@@ -430,7 +481,7 @@ func (c Connection) GetConnection(context context.Context) (*sql.Conn, error) {
 // *****************************************************
 
 // prepareStatement creates a new goOra Statement
-func (c Connection) prepareStatement(statement string) (*sql.Stmt, error) {
+func (c *Connection) prepareStatement(statement string) (*sql.Stmt, error) {
 	// create statement
 	return c.conn.Prepare(statement)
 	//return goOra.NewStmt(statement, c.conn)
@@ -590,11 +641,11 @@ func createConnection(constr string) (*sql.DB, error) {
 	// set limits
 	conn.SetMaxOpenConns(50)
 	conn.SetMaxIdleConns(10)
-	conn.SetConnMaxIdleTime(3 * time.Second)
-	conn.SetConnMaxLifetime(3 * time.Second)
+	//conn.SetConnMaxIdleTime(3 * time.Second)
+	//conn.SetConnMaxLifetime(3 * time.Second)
 
 	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// ping connection
