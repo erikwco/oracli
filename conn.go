@@ -95,7 +95,7 @@ func NewConnection(constr string, name string) (*Connection, error) {
 }
 
 // NewParam creates and fill a new Param
-func (c Connection) NewParam(name string, value driver.Value) *Param {
+func (c *Connection) NewParam(name string, value driver.Value) *Param {
 	return &Param{
 		Name:      name,
 		Value:     value,
@@ -106,7 +106,7 @@ func (c Connection) NewParam(name string, value driver.Value) *Param {
 }
 
 // NewCursorParam cursor para parámetros
-func (c Connection) NewCursorParam(name string) *Param {
+func (c *Connection) NewCursorParam(name string) *Param {
 	return &Param{
 		Name:      name,
 		Value:     "",
@@ -251,7 +251,6 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
 		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
 			return Result{
@@ -386,7 +385,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 }
 
 // BeginTx start a new transaction to allow commit or rollback
-func (c Connection) BeginTx() error {
+func (c *Connection) BeginTx() error {
 	// starting transaction
 	tx, err := c.conn.Begin()
 	if err != nil {
@@ -399,7 +398,7 @@ func (c Connection) BeginTx() error {
 
 // Commit set commit to the current transaction
 // if exists
-func (c Connection) Commit() error {
+func (c *Connection) Commit() error {
 	if c.tx != nil {
 		return c.tx.Commit()
 	} else {
@@ -410,7 +409,7 @@ func (c Connection) Commit() error {
 
 // Rollback set rollback to the current transaction
 // if exists
-func (c Connection) Rollback() error {
+func (c *Connection) Rollback() error {
 	if c.tx != nil {
 		return c.tx.Rollback()
 	} else {
@@ -426,6 +425,7 @@ func (c *Connection) Close() {
 	if err != nil {
 		fmt.Printf("Error closing connection [%s]", err.Error())
 	}
+
 }
 
 // Ping database connection
@@ -471,7 +471,8 @@ func (c *Connection) ReConnect() error {
 }
 
 // GetConnection creates and individual connection
-func (c Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
+
 	return c.conn.Conn(context)
 }
 
@@ -480,7 +481,7 @@ func (c Connection) GetConnection(context context.Context) (*sql.Conn, error) {
 // *****************************************************
 
 // prepareStatement creates a new goOra Statement
-func (c Connection) prepareStatement(statement string) (*sql.Stmt, error) {
+func (c *Connection) prepareStatement(statement string) (*sql.Stmt, error) {
 	// create statement
 	return c.conn.Prepare(statement)
 	//return goOra.NewStmt(statement, c.conn)
