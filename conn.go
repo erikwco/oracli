@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/mapstructure"
+	"io"
 	"log"
 	"time"
 
@@ -38,13 +39,23 @@ func (cs ConnStatus) String() string {
 	return [...]string{"ConnClosed", "ConnOpened", "ConnError"}[cs]
 }
 
+// ConnectionConfiguration represents the minimum configuration required for the connection pool
+type ConnectionConfiguration struct {
+	MaxOpenConnections    int
+	MaxIdleConnections    int
+	MaxConnectionLifeTime time.Duration
+	MaxIdleConnectionTime time.Duration
+}
+
 // Connection represents an object connection for Oracle
 type Connection struct {
-	Name   string
-	ConStr string
-	conn   *sql.DB
-	tx     driver.Tx
-	Status ConnStatus
+	Name          string
+	ConStr        string
+	Configuration ConnectionConfiguration
+	log           Loggable
+	conn          *sql.DB
+	tx            driver.Tx
+	Status        ConnStatus
 }
 
 // Param used to Select / Exec a statement
@@ -68,30 +79,51 @@ type params struct {
 // *****************************************************
 
 // NewConnectionWithParams Conexión con parámetros nombrados
-func NewConnectionWithParams(server string, port int, user string, password string, service string, options map[string]string, name string) (*Connection, error) {
+func NewConnectionWithParams(
+	server string,
+	port int,
+	user string,
+	password string,
+	service string,
+	options map[string]string,
+	configuration ConnectionConfiguration,
+	name string,
+) (*Connection, error) {
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
-	return NewConnection(conStr, name)
+	return NewConnection(conStr, name, configuration)
 }
 
 // NewConnection create and open a goOra Connection
-func NewConnection(constr string, name string) (*Connection, error) {
+func NewConnection(constr string, name string, configuration ConnectionConfiguration) (*Connection, error) {
+	l := newLogger()
+	l.Infof("+++ Nuevo Pool de Conexiones [%v]", name)
 	if constr == "" {
+		l.Error("connection string sin valor")
 		return nil, EmptyConStrErr
 	}
-
+	
 	// createConnection
-	conn, err := createConnection(constr)
+	conn, err := createConnection(constr, configuration)
 	if err != nil {
+		l.Err(err, "apertura de conexión del pool no pudo realizarse")
 		return nil, err
 	}
-
+	
 	// returning connection
 	return &Connection{
-		Name:   name,
-		conn:   conn,
-		ConStr: constr,
-		Status: ConnOpened,
+		Name:          name,
+		conn:          conn,
+		ConStr:        constr,
+		Status:        ConnOpened,
+		Configuration: configuration,
+		log:           l,
 	}, nil
+}
+
+// SetCustomLog recibe un ioWriter para unificar el log
+func (c *Connection) SetCustomLog(input io.Writer) {
+	l := setCustomLog(input)
+	c.log = l
 }
 
 // NewParam creates and fill a new Param
@@ -103,6 +135,7 @@ func (c *Connection) NewParam(name string, value driver.Value) *Param {
 		Direction: goOra.Input,
 		IsRef:     false,
 	}
+	
 }
 
 // NewCursorParam cursor para parámetros
@@ -450,7 +483,7 @@ func (c *Connection) ReConnect() error {
 		err := c.Ping()
 		if err != nil {
 			c.Status = ConnClosed
-			conn, err := createConnection(c.ConStr)
+			conn, err := createConnection(c.ConStr, c.Configuration)
 			if err != nil {
 				return err
 			}
@@ -459,7 +492,7 @@ func (c *Connection) ReConnect() error {
 		}
 	} else {
 		c.Status = ConnClosed
-		conn, err := createConnection(c.ConStr)
+		conn, err := createConnection(c.ConStr, c.Configuration)
 		if err != nil {
 			return err
 		}
@@ -629,25 +662,49 @@ func unwrapToRecordString(columns []string, values []string) Record {
 }
 
 // createConnection
-func createConnection(constr string) (*sql.DB, error) {
+func createConnection(constr string, configuration ConnectionConfiguration) (*sql.DB, error) {
 	//conn, err := goOra.NewConnection(constr)
-
+	
 	// Open connection via sql.Open interface
 	conn, err := sql.Open("oracle", constr)
 	if err != nil {
 		return nil, CantCreateConnErr(err.Error())
 	}
-
+	
 	// set limits
-	conn.SetMaxOpenConns(50)
-	conn.SetMaxIdleConns(10)
+	// cantidad de conexiones activas que puede tener el pool
+	if configuration.MaxOpenConnections > 0 {
+		conn.SetMaxOpenConns(configuration.MaxOpenConnections)
+	} else {
+		conn.SetMaxOpenConns(100)
+	}
+	
+	// cantidad de conexiones que pueden estar en espera de ser reutilizadas
+	if configuration.MaxIdleConnections > 0 {
+		conn.SetMaxIdleConns(configuration.MaxIdleConnections)
+	} else {
+		conn.SetMaxIdleConns(50)
+	}
+	
+	// tiempo total que vivirá una conexión sea esta reutilizada o no
+	if configuration.MaxConnectionLifeTime > 0 {
+		conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
+	} else {
+		conn.SetConnMaxLifetime(15 * time.Minute)
+	}
+	
+	if configuration.MaxIdleConnectionTime > 0 {
+		conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
+	} else {
+		conn.SetConnMaxIdleTime(5 * time.Minute)
+	}
+	
 	//conn.SetConnMaxIdleTime(3 * time.Second)
-	//conn.SetConnMaxLifetime(3 * time.Second)
-
+	
 	// test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
+	
 	// ping connection
 	err = conn.PingContext(ctx)
 	if err != nil {
