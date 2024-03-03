@@ -167,7 +167,16 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
-	if c.Status == ConnClosed || c.Ping() != nil {
+	err := c.Ping()
+	if err != nil  {
+		return Result {
+			Error:           errors.New(fmt.Sprintf("Error en la conexión [%s]", err.Error())),
+			RecordsAffected: 0,
+			HasData: false,
+		}
+	}
+	
+	if c.Status == ConnClosed   {
 		err := c.ReConnect()
 		if err != nil {
 			return Result{
@@ -708,7 +717,7 @@ func createConnection(constr string, configuration ConnectionConfiguration) (*sq
 	// ping connection
 	err = conn.PingContext(ctx)
 	if err != nil {
-		return nil, CantPingConnection(err.Error())
+		return nil, CantPingConnection(fmt.Sprintf("PingContext %v", err.Error()))
 	}
 
 	return conn, nil
