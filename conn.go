@@ -58,12 +58,20 @@ type Connection struct {
 	Status        ConnStatus
 }
 
+type ParameterDirection int
+
+const (
+	Input  ParameterDirection = 1
+	Output ParameterDirection = 2
+	InOut  ParameterDirection = 3
+)
+
 // Param used to Select / Exec a statement
 type Param struct {
 	Name      string
 	Value     driver.Value
 	Size      int
-	Direction goOra.ParameterDirection
+	Direction ParameterDirection
 	IsRef     bool
 }
 
@@ -126,7 +134,7 @@ func (c *Connection) NewParam(name string, value driver.Value) *Param {
 		Name:      name,
 		Value:     value,
 		Size:      100,
-		Direction: goOra.Input,
+		Direction: Input,
 		IsRef:     false,
 	}
 	
@@ -138,7 +146,7 @@ func (c *Connection) NewCursorParam(name string) *Param {
 		Name:      name,
 		Value:     "",
 		Size:      1000,
-		Direction: goOra.Output,
+		Direction: Output,
 		IsRef:     true,
 	}
 }
