@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/mapstructure"
-	"io"
+	"github.com/rs/zerolog"
 	"log"
 	"time"
-
+	
 	goOra "github.com/sijms/go-ora/v2"
 )
 
@@ -52,7 +52,7 @@ type Connection struct {
 	Name          string
 	ConStr        string
 	Configuration ConnectionConfiguration
-	log           Loggable
+	log *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
 	Status        ConnStatus
@@ -95,17 +95,13 @@ func NewConnectionWithParams(
 
 // NewConnection create and open a goOra Connection
 func NewConnection(constr string, name string, configuration ConnectionConfiguration) (*Connection, error) {
-	l := newLogger()
-	l.Infof("+++ Nuevo Pool de Conexiones [%v]", name)
 	if constr == "" {
-		l.Error("connection string sin valor")
 		return nil, EmptyConStrErr
 	}
 	
 	// createConnection
 	conn, err := createConnection(constr, configuration)
 	if err != nil {
-		l.Err(err, "apertura de conexión del pool no pudo realizarse")
 		return nil, err
 	}
 	
@@ -116,14 +112,12 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 		ConStr:        constr,
 		Status:        ConnOpened,
 		Configuration: configuration,
-		log:           l,
 	}, nil
 }
 
-// SetCustomLog recibe un ioWriter para unificar el log
-func (c *Connection) SetCustomLog(input io.Writer) {
-	l := setCustomLog(input)
-	c.log = l
+func (c *Connection) WithLogger(logger *zerolog.Logger) *Connection {
+	c.log = logger
+	return c
 }
 
 // NewParam creates and fill a new Param
@@ -163,7 +157,7 @@ func Parser[T any](source Result) (T, error) {
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
 func (c *Connection) Select(stmt string, params []*Param) Result {
-
+	c.log.Info().Msgf(" >>> Select [%s]", stmt)
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
