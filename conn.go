@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/mapstructure"
-	"github.com/rs/zerolog"
+	goOra "github.com/sijms/go-ora/v2"
 	"log"
 	"time"
-	
-	goOra "github.com/sijms/go-ora/v2"
 )
 
 // Connector interface that define a connection
@@ -52,7 +50,6 @@ type Connection struct {
 	Name          string
 	ConStr        string
 	Configuration ConnectionConfiguration
-	log *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
 	Status        ConnStatus
@@ -123,10 +120,6 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 	}, nil
 }
 
-func (c *Connection) WithLogger(logger *zerolog.Logger) *Connection {
-	c.log = logger
-	return c
-}
 
 // NewParam creates and fill a new Param
 func (c *Connection) NewParam(name string, value driver.Value) *Param {
@@ -165,7 +158,6 @@ func Parser[T any](source Result) (T, error) {
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
 func (c *Connection) Select(stmt string, params []*Param) Result {
-	c.log.Info().Msgf(" >>> Select [%s]", stmt)
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
