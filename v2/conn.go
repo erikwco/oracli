@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mitchellh/mapstructure"
-	"io"
+	"github.com/rs/zerolog"
 	"log"
 	"time"
-
+	
 	goOra "github.com/sijms/go-ora/v2"
 )
 
@@ -29,6 +29,7 @@ type Connector interface {
 // ConnStatus exposes connection status
 type ConnStatus int
 
+// Connection status
 const (
 	ConnClosed ConnStatus = iota
 	ConnOpened
@@ -37,6 +38,19 @@ const (
 // String allow string conversion to ConnStatus
 func (cs ConnStatus) String() string {
 	return [...]string{"ConnClosed", "ConnOpened", "ConnError"}[cs]
+}
+
+// ParameterDirection defines the direction of the parameter
+type ParameterDirection int
+
+const (
+	Input ParameterDirection = iota
+	Output
+	InOut
+)
+
+func (p ParameterDirection) String() string {
+	return [...]string{"Input", "Output", "InputOutput"}[p]
 }
 
 // ConnectionConfiguration represents the minimum configuration required for the connection pool
@@ -52,7 +66,7 @@ type Connection struct {
 	Name          string
 	ConStr        string
 	Configuration ConnectionConfiguration
-	log           Loggable
+	log *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
 	Status        ConnStatus
@@ -63,7 +77,7 @@ type Param struct {
 	Name      string
 	Value     driver.Value
 	Size      int
-	Direction goOra.ParameterDirection
+	Direction ParameterDirection
 	IsRef     bool
 }
 
@@ -88,27 +102,28 @@ func NewConnectionWithParams(
 	options map[string]string,
 	configuration ConnectionConfiguration,
 	name string,
+	log *zerolog.Logger,
 ) (*Connection, error) {
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
-	return NewConnection(conStr, name, configuration)
+	return NewConnection(conStr, name, configuration, log)
 }
 
 // NewConnection create and open a goOra Connection
-func NewConnection(constr string, name string, configuration ConnectionConfiguration) (*Connection, error) {
-	l := newLogger()
-	l.Infof("+++ Nuevo Pool de Conexiones [%v]", name)
+func NewConnection(constr string, name string, configuration ConnectionConfiguration, log *zerolog.Logger) (*Connection, error) {
+	log.Info().Msgf("+++ Nuevo Pool de Conexiones [%v]", name)
 	if constr == "" {
-		l.Error("connection string sin valor")
+		log.Error().Msg("connection string sin valor")
 		return nil, EmptyConStrErr
 	}
 	
 	// createConnection
 	conn, err := createConnection(constr, configuration)
 	if err != nil {
-		l.Err(err, "apertura de conexión del pool no pudo realizarse")
+		log.Err(err).Msg("apertura de conexión del pool no pudo realizarse")
 		return nil, err
 	}
 	
+	log.Info().Msgf("+++ Nuevo pool de Conexiones [%v] craedo", name)
 	// returning connection
 	return &Connection{
 		Name:          name,
@@ -116,14 +131,20 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 		ConStr:        constr,
 		Status:        ConnOpened,
 		Configuration: configuration,
-		log:           l,
+		log: log,
 	}, nil
 }
 
-// SetCustomLog recibe un ioWriter para unificar el log
-func (c *Connection) SetCustomLog(input io.Writer) {
-	l := setCustomLog(input)
-	c.log = l
+// NewInOutParam creates and fill a new InOut Parameter
+func (c *Connection) NewInOutParam(name string, value driver.Value) *Param {
+	return &Param{
+		Name:      name,
+		Value:     value,
+		Size:      100,
+		Direction: InOut,
+		IsRef:     false,
+	}
+	
 }
 
 // NewParam creates and fill a new Param
@@ -132,7 +153,7 @@ func (c *Connection) NewParam(name string, value driver.Value) *Param {
 		Name:      name,
 		Value:     value,
 		Size:      100,
-		Direction: goOra.Input,
+		Direction: Input,
 		IsRef:     false,
 	}
 	
@@ -144,7 +165,7 @@ func (c *Connection) NewCursorParam(name string) *Param {
 		Name:      name,
 		Value:     "",
 		Size:      1000,
-		Direction: goOra.Output,
+		Direction: Output,
 		IsRef:     true,
 	}
 }
@@ -163,12 +184,15 @@ func Parser[T any](source Result) (T, error) {
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
 func (c *Connection) Select(stmt string, params []*Param) Result {
-
+	
+	c.log.Info().Msgf("+++ Hit Select for  [%v]", stmt)
+	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
 	err := c.Ping()
 	if err != nil  {
+		c.log.Err(err).Msg("Error realizando Ping a la conexión")
 		return Result {
 			Error:           errors.New(fmt.Sprintf("Error en la conexión [%s]", err.Error())),
 			RecordsAffected: 0,
@@ -179,6 +203,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 	if c.Status == ConnClosed   {
 		err := c.ReConnect()
 		if err != nil {
+			c.log.Err(err).Msg("Error realizando ReConnect a la conexión")
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
@@ -203,6 +228,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		fmt.Println(stmt)
 		_, err := c.conn.Exec(stmt, p.values...)
 		if err != nil {
+			c.log.Err(err).Msg("Error ejecutando el statement")
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
@@ -216,11 +242,11 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// ***********************************************
 			// defer closing cursor
 			// ***********************************************
-			defer func(c *goOra.RefCursor) {
-				if c != nil {
-					err := c.Close()
+			defer func(cursor *goOra.RefCursor) {
+				if cursor != nil {
+					err := cursor.Close()
 					if err != nil {
-						fmt.Printf("Error closing statement [%s]\n", err.Error())
+						c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
 					}
 				}
 			}(p.cursor)
@@ -231,6 +257,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 
 			rows, err := p.cursor.Query()
 			if err != nil {
+				c.log.Err(err).Msg("Error ejecutando el cursor")
 				return Result{
 					Error:           err,
 					RecordsAffected: 0,
@@ -241,7 +268,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			defer func() {
 				err := rows.Close()
 				if err != nil {
-					fmt.Printf("Error closing statement [%s]\n", err.Error())
+					c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
 				}
 			}()
 
@@ -261,6 +288,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			}
 
 		} else {
+			c.log.Err(err).Msg("Error ejecutando el cursor")
 			return Result{
 				Error:           errors.New("refCursor not found"),
 				RecordsAffected: 0,
@@ -273,6 +301,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		query, err := c.prepareStatement(stmt)
 		if err != nil {
+			c.log.Err(err).Msg("Error preparando el statement")
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
@@ -284,7 +313,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			//fmt.Println("**** Closing query ****")
 			err := s.Close()
 			if err != nil {
-				fmt.Printf("Error closing statement [%s]\n", err.Error())
+				c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
 			}
 		}(query)
 
@@ -295,6 +324,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		defer cancel()
 		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
+			c.log.Err(err).Msg("Error ejecutando el query")
 			return Result{
 				Error:           err,
 				RecordsAffected: 0,
@@ -305,7 +335,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		defer func(r *sql.Rows) {
 			err := r.Close()
 			if err != nil {
-				fmt.Printf("Error closing statement [%s]\n", err.Error())
+				c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
 			}
 		}(rows)
 
