@@ -1,4 +1,4 @@
-module github.com/erikwco/oracli/v2
+module github.com/erikwco/oracli
 
 go 1.22
 
