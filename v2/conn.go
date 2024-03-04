@@ -105,6 +105,7 @@ func NewConnectionWithParams(
 	log *zerolog.Logger,
 ) (*Connection, error) {
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
+	log.Info().Msgf(" +++ Connection String [%v]", conStr)
 	return NewConnection(conStr, name, configuration, log)
 }
 
