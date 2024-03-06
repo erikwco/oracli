@@ -716,6 +716,7 @@ func unwrapToRecordString(columns []string, values []string) Record {
 // createConnection
 func createConnection(constr string, configuration ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
 	log.Info().Msg(" ----------------------------------------  ")
+	log.Info().Msgf(" ... ConfigurationSet : %v", configuration.ConfigurationSet)
 	log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
 	log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
 	log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
