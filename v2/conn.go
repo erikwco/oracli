@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/mitchellh/mapstructure"
 	"github.com/rs/zerolog"
-	"log"
 	"time"
 	
 	goOra "github.com/sijms/go-ora/v2"
@@ -276,7 +275,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// ***********************************************
 			// unwrap rows and return
 			// ***********************************************
-			records, err := unwrapRows(rows)
+			records, err := c.unwrapRows(rows)
 			rowsAffected := 0
 			if err == nil {
 				rowsAffected = len(records.Data)
@@ -344,7 +343,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// ***********************************************
 		// unwrapping rows
 		// ***********************************************
-		records, err := unwrapRowsSql(rows)
+		records, err := c.unwrapRowsSql(rows)
 		rowsAffected := 0
 		if err == nil {
 			rowsAffected = len(records.Data)
@@ -361,6 +360,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 }
 
 func (c *Connection) ExecuteDDL(stmt string) Result {
+	c.log.Info().Msgf("+++ Hit ExecuteDDL for  [%v]", stmt)
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
@@ -403,6 +403,8 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
 func (c *Connection) Exec(stmt string, params []*Param) Result {
+	c.log.Info().Msgf("+++ Hit Exec for  [%v]", stmt)
+	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
@@ -612,12 +614,12 @@ func buildParamsList(parameters []*Param) *params {
 }
 
 // unwrapRows take *goOra.DataSet and convert to Container
-func unwrapRows(rows *goOra.DataSet) (*Container, error) {
+func (c *Connection) unwrapRows(rows *goOra.DataSet) (*Container, error) {
 	// closing rows
 	defer func() {
 		err := rows.Close()
 		if err != nil {
-			fmt.Printf("Error closing statement [%s]\n", err.Error())
+			c.log.Err(err).Msg("Ocurrió un error al cerrar las filas")
 		}
 	}()
 
@@ -636,9 +638,14 @@ func unwrapRows(rows *goOra.DataSet) (*Container, error) {
 	// running records
 	for rows.Next_() {
 		if err = rows.Scan(columnPointers...); err != nil {
+			c.log.Err(err).Msg("Ocurrió un error al recorrer las filas")
 			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 		}
 		container.addToRowsString(columns, values)
+	}
+	if rows.Err() != nil {
+		c.log.Err(err).Msg("Ocurrió un error al final de recorrer las filas")
+		return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 	}
 
 	// returning data
@@ -646,12 +653,12 @@ func unwrapRows(rows *goOra.DataSet) (*Container, error) {
 }
 
 // unwrapRowsSql takes sql.Rows and convert to Container
-func unwrapRowsSql(rows *sql.Rows) (*Container, error) {
+func (c *Connection) unwrapRowsSql(rows *sql.Rows) (*Container, error) {
 	// closing rows
 	defer func() {
 		err := rows.Close()
 		if err != nil {
-			fmt.Printf("Error closing statement [%s]\n", err.Error())
+			c.log.Err(err).Msg("Ocurrió un error al cerrar las filas")
 		}
 	}()
 
@@ -673,10 +680,14 @@ func unwrapRowsSql(rows *sql.Rows) (*Container, error) {
 	// running records
 	for rows.Next() {
 		if err = rows.Scan(columnPointers...); err != nil {
-			log.Printf("unwrapRowSQL - 7 - [%v]", err)
+			c.log.Err(err).Msg("Ocurrió un error al recorrer las filas")
 			return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 		}
 		container.addToRows(columns, values)
+	}
+	if rows.Err() != nil {
+		c.log.Err(err).Msg("Ocurrió un error al final de recorrer las filas")
+		return nil, errors.New(fmt.Sprintf("error unwrapping rows [%s]", err.Error()))
 	}
 
 	// returning data
