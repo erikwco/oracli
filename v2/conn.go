@@ -117,7 +117,7 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 	}
 	
 	// createConnection
-	conn, err := createConnection(constr, configuration)
+	conn, err := createConnection(constr, configuration, log)
 	if err != nil {
 		log.Err(err).Msg("apertura de conexión del pool no pudo realizarse")
 		return nil, err
@@ -525,7 +525,7 @@ func (c *Connection) ReConnect() error {
 		err := c.Ping()
 		if err != nil {
 			c.Status = ConnClosed
-			conn, err := createConnection(c.ConStr, c.Configuration)
+			conn, err := createConnection(c.ConStr, c.Configuration, c.log)
 			if err != nil {
 				return err
 			}
@@ -534,7 +534,7 @@ func (c *Connection) ReConnect() error {
 		}
 	} else {
 		c.Status = ConnClosed
-		conn, err := createConnection(c.ConStr, c.Configuration)
+		conn, err := createConnection(c.ConStr, c.Configuration, c.log)
 		if err != nil {
 			return err
 		}
@@ -713,8 +713,13 @@ func unwrapToRecordString(columns []string, values []string) Record {
 }
 
 // createConnection
-func createConnection(constr string, configuration ConnectionConfiguration) (*sql.DB, error) {
-	//conn, err := goOra.NewConnection(constr)
+func createConnection(constr string, configuration ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
+	log.Info().Msg(" ----------------------------------------  ")
+	log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
+	log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
+	log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
+	log.Info().Msgf(" ... MaxIdleConnectionTime : %v", configuration.MaxIdleConnectionTime)
+	log.Info().Msg(" ----------------------------------------  ")
 	
 	// Open connection via sql.Open interface
 	conn, err := sql.Open("oracle", constr)
