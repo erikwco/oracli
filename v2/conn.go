@@ -406,6 +406,9 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 func (c *Connection) Exec(stmt string, params []*Param) Result {
 	c.log.Info().Msgf("+++ Hit Exec for  [%v]", stmt)
 	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
+	for _, p := range params {
+		c.log.Info().Msgf("+++ Param [%v] - Value [%v]", p.Name, p.Value)
+	}
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
@@ -735,36 +738,6 @@ func createConnection(constr string, configuration ConnectionConfiguration, log 
 		conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
 		conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
 	}
-	
-	//// set limits
-	//// cantidad de conexiones activas que puede tener el pool
-	//if configuration.MaxOpenConnections > 0 {
-	//	conn.SetMaxOpenConns(configuration.MaxOpenConnections)
-	//} else {
-	//	conn.SetMaxOpenConns(100)
-	//}
-	//
-	//// cantidad de conexiones que pueden estar en espera de ser reutilizadas
-	//if configuration.MaxIdleConnections > 0 {
-	//	conn.SetMaxIdleConns(configuration.MaxIdleConnections)
-	//} else {
-	//	conn.SetMaxIdleConns(50)
-	//}
-	//
-	//// tiempo total que vivirá una conexión sea esta reutilizada o no
-	//if configuration.MaxConnectionLifeTime > 0 {
-	//	conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
-	//} else {
-	//	conn.SetConnMaxLifetime(15 * time.Minute)
-	//}
-	//
-	//if configuration.MaxIdleConnectionTime > 0 {
-	//	conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
-	//} else {
-	//	conn.SetConnMaxIdleTime(5 * time.Minute)
-	//}
-	
-	//conn.SetConnMaxIdleTime(3 * time.Second)
 	
 	// test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
