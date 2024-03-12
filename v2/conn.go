@@ -6,11 +6,11 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/rs/zerolog"
-
 	goOra "github.com/sijms/go-ora/v2"
 )
 
@@ -58,6 +58,7 @@ type ConnectionConfiguration struct {
 	ConfigurationSet      bool
 	MaxOpenConnections    int
 	MaxIdleConnections    int
+	ContextTimeout        int
 	MaxConnectionLifeTime time.Duration
 	MaxIdleConnectionTime time.Duration
 }
@@ -66,11 +67,12 @@ type ConnectionConfiguration struct {
 type Connection struct {
 	Name          string
 	ConStr        string
-	Configuration ConnectionConfiguration
+	Configuration *ConnectionConfiguration
 	log           *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
 	Status        ConnStatus
+	lock          *sync.Mutex
 }
 
 // Param used to Select / Exec a statement
@@ -89,29 +91,41 @@ type params struct {
 	cursor *goOra.RefCursor
 }
 
-// *****************************************************
-// Public
-// *****************************************************
+// -----------------------------------------------------
+// Public Methods
+// -----------------------------------------------------
 
-// NewConnectionWithParams Conexión con parámetros nombrados
-func NewConnectionWithParams(
-	server string,
-	port int,
-	user string,
-	password string,
-	service string,
+// NewConnectionWithParams create a new connection using every parameter independently
+// Parameters:
+// @server: Server Address - name or ip
+// @port: Connection port
+// @user: User name
+// @password: password
+// @service: Service Name for Oracle connection if SID is needed use @options
+// @options: specified some options like TRACE, SID or conStr etc.
+// @configuration: Specifies how connections parameters must be handled in ConnectionConfiguration
+// @name: Connection name
+// @log: In this version *zerolog.Logger is required
+func NewConnectionWithParams(server string, port int, user, password, service string,
 	options map[string]string,
-	configuration ConnectionConfiguration,
+	configuration *ConnectionConfiguration,
 	name string,
 	log *zerolog.Logger,
 ) (*Connection, error) {
+	// TODO: evaluate to remove *zerolog.logger by generic interface
 	conStr := goOra.BuildUrl(server, port, service, user, password, options)
 	log.Info().Msgf(" +++ Connection String [%v]", conStr)
 	return NewConnection(conStr, name, configuration, log)
 }
 
-// NewConnection create and open a goOra Connection
-func NewConnection(constr string, name string, configuration ConnectionConfiguration, log *zerolog.Logger) (*Connection, error) {
+// NewConnection create and open a goOra Connection based on buildUrl
+// Parameters:
+// @constr: Connection String built with buildUrl
+// @name: Connection name
+// @configuration:n Specifies how connection must be handled widh ConnectionConfiguration
+// @log: In this version *zerolog.Logger is required
+func NewConnection(constr string, name string, configuration *ConnectionConfiguration, log *zerolog.Logger) (*Connection, error) {
+	// TODO: evaluate to remove *zerolog.logger by generic interface
 	log.Info().Msgf("+++ Nuevo Pool de Conexiones [%v]", name)
 	if constr == "" {
 		log.Error().Msg("connection string sin valor")
@@ -125,7 +139,7 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 		return nil, err
 	}
 
-	log.Info().Msgf("+++ Nuevo pool de Conexiones [%v] craedo", name)
+	log.Info().Msgf("+++ Nuevo pool de Conexiones [%v] creado", name)
 	// returning connection
 	return &Connection{
 		Name:          name,
@@ -134,10 +148,14 @@ func NewConnection(constr string, name string, configuration ConnectionConfigura
 		Status:        ConnOpened,
 		Configuration: configuration,
 		log:           log,
+		lock:          &sync.Mutex{},
 	}, nil
 }
 
 // NewInOutParam creates and fill a new InOut Parameter
+// Parameters:
+// @name: Parameter name - only for control
+// @value: value to be passed
 func (c *Connection) NewInOutParam(name string, value driver.Value) *Param {
 	return &Param{
 		Name:      name,
@@ -148,7 +166,10 @@ func (c *Connection) NewInOutParam(name string, value driver.Value) *Param {
 	}
 }
 
-// NewParam creates and fill a new Param
+// NewParam creates and fill a new Input Parameter
+// Parameters:
+// @name: Parameter name - only for control
+// @value: value to be passed
 func (c *Connection) NewParam(name string, value driver.Value) *Param {
 	return &Param{
 		Name:      name,
@@ -159,7 +180,9 @@ func (c *Connection) NewParam(name string, value driver.Value) *Param {
 	}
 }
 
-// NewCursorParam cursor para parámetros
+// NewCursorParam creates a new Output parameter of type sys_refcursor
+// Parameters:
+// @name: Parameter name - only for control
 func (c *Connection) NewCursorParam(name string) *Param {
 	return &Param{
 		Name:      name,
@@ -170,7 +193,9 @@ func (c *Connection) NewCursorParam(name string) *Param {
 	}
 }
 
-// Parser converts Result object to structure
+// Parser generic function to convert Result object to structure
+// Parameters:
+// @source: Result object that contains the data
 func Parser[T any](source Result) (T, error) {
 	var empty T
 	var data T
@@ -181,8 +206,19 @@ func Parser[T any](source Result) (T, error) {
 	return data, nil
 }
 
+// GetConnectionStatus return the actual status of a connection
+func (c *Connection) GetConnectionStatus() (status ConnStatus) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	status = c.Status
+	return
+}
+
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
+// Parameters:
+// @stmt: Statement to execute
+// @params: []*Params - list of parameters to be replaced by position in the @stmt
 func (c *Connection) Select(stmt string, params []*Param) Result {
 	c.log.Info().Msgf("+++ Hit Select for  [%v]", stmt)
 	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
@@ -199,7 +235,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		}
 	}
 
-	if c.Status == ConnClosed {
+	if c.GetConnectionStatus() == ConnClosed {
 		err := c.ReConnect()
 		if err != nil {
 			c.log.Err(err).Msg("Error realizando ReConnect a la conexión")
@@ -362,7 +398,7 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
-	if c.Status == ConnClosed || c.Ping() != nil {
+	if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
 		err := c.ReConnect()
 		if err != nil {
 			return Result{
@@ -404,19 +440,6 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
 	for _, p := range params {
 		c.log.Info().Msgf("+++ Param [%v] - Value [%v]", p.Name, p.Value)
-	}
-	// ***********************************************
-	// Evaluando conexión
-	// ***********************************************
-	if c.Status == ConnClosed || c.Ping() != nil {
-		err := c.ReConnect()
-		if err != nil {
-			return Result{
-				Error:           err,
-				RecordsAffected: 0,
-				HasData:         false,
-			}
-		}
 	}
 
 	// prepare statement
@@ -494,6 +517,7 @@ func (c *Connection) Rollback() error {
 
 // Close closes the current connection
 func (c *Connection) Close() {
+	// TODO: remove c.Status field
 	c.Status = ConnClosed
 	err := c.conn.Close()
 	if err != nil {
@@ -503,6 +527,9 @@ func (c *Connection) Close() {
 
 // Ping database connection
 func (c *Connection) Ping() error {
+	// TODO: Refactor Ping to not use StatusConn, works only with error from
+	// ping result.
+
 	// test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -510,18 +537,27 @@ func (c *Connection) Ping() error {
 	// ping connection
 	err := c.conn.PingContext(ctx)
 	if err != nil {
+		c.lock.Lock()
+		defer c.lock.Unlock()
 		c.Status = ConnClosed
 		return CantPingConnection(err.Error())
 	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	c.Status = ConnOpened
 	return nil
 }
 
 // ReConnect test a select against the database to check connection
 func (c *Connection) ReConnect() error {
-	if c.Status == ConnOpened {
+	// WARNING: evaluate the fact ReConnect is generating
+	// some kind of false positive, in connection Status
+	// because could be many goroutines trying reConnect
+	if c.GetConnectionStatus() == ConnOpened {
 		err := c.Ping()
 		if err != nil {
+			c.lock.Lock()
+			defer c.lock.Unlock()
 			c.Status = ConnClosed
 			conn, err := createConnection(c.ConStr, c.Configuration, c.log)
 			if err != nil {
@@ -531,6 +567,8 @@ func (c *Connection) ReConnect() error {
 			c.conn = conn
 		}
 	} else {
+		c.lock.Lock()
+		defer c.lock.Unlock()
 		c.Status = ConnClosed
 		conn, err := createConnection(c.ConStr, c.Configuration, c.log)
 		if err != nil {
@@ -547,15 +585,39 @@ func (c *Connection) GetConnection(context context.Context) (*sql.Conn, error) {
 	return c.conn.Conn(context)
 }
 
-// *****************************************************
+// -----------------------------------------------------
 // Private
-// *****************************************************
+// -----------------------------------------------------
 
-// prepareStatement creates a new goOra Statement
-func (c *Connection) prepareStatement(statement string) (*sql.Stmt, error) {
-	// create statement
-	return c.conn.Prepare(statement)
-	// return goOra.NewStmt(statement, c.conn)
+// prepareStatement creates a new goOra Statement, we use named returned values
+// to override response in defer
+func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err error) {
+	// We will handle the possible panic error inside a defer function, if panic happens
+	// stmt and error must be filled with nil, and recover as error
+	defer func() {
+		if r := recover(); r != nil {
+			stmt = nil
+			err = r.(error)
+		}
+	}()
+
+	// -----------------------------------------------
+	// Evaluando conexión
+	// -----------------------------------------------
+	if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
+		err = c.ReConnect()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	stmt, err = c.conn.Prepare(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// return
+	return
 }
 
 // addToRows take the rows from the result and append the result
@@ -708,30 +770,37 @@ func unwrapToRecordString(columns []string, values []string) Record {
 }
 
 // createConnection
-func createConnection(constr string, configuration ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
-	log.Info().Msg(" ----------------------------------------  ")
-	log.Info().Msgf(" ... ConfigurationSet : %v", configuration.ConfigurationSet)
-	log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
-	log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
-	log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
-	log.Info().Msgf(" ... MaxIdleConnectionTime : %v", configuration.MaxIdleConnectionTime)
-	log.Info().Msg(" ----------------------------------------  ")
-
+func createConnection(constr string, configuration *ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
 	// Open connection via sql.Open interface
 	conn, err := sql.Open("oracle", constr)
 	if err != nil {
 		return nil, CantCreateConnErr(err.Error())
 	}
 
-	if configuration.ConfigurationSet {
-		conn.SetMaxOpenConns(configuration.MaxOpenConnections)
-		conn.SetMaxIdleConns(configuration.MaxIdleConnections)
-		conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
-		conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
+	// context timeout
+	timeout := time.Duration(30) * time.Second
+
+	if configuration != nil {
+		if configuration.ConfigurationSet {
+
+			log.Info().Msg(" ----------------------------------------  ")
+			log.Info().Msgf(" ... ConfigurationSet : %v", configuration.ConfigurationSet)
+			log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
+			log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
+			log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
+			log.Info().Msgf(" ... MaxIdleConnectionTime : %v", configuration.MaxIdleConnectionTime)
+			log.Info().Msg(" ----------------------------------------  ")
+
+			conn.SetMaxOpenConns(configuration.MaxOpenConnections)
+			conn.SetMaxIdleConns(configuration.MaxIdleConnections)
+			conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
+			conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
+			timeout = time.Duration(configuration.ContextTimeout) * time.Second
+		}
 	}
 
 	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// ping connection
