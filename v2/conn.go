@@ -454,9 +454,16 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	query, err := c.prepareStatement(stmt)
 	// defer closing statement
 	defer func() {
-		err := query.Close()
-		if err != nil {
-			fmt.Printf("Error closing statement [%s]\n", err.Error())
+		if query != nil {
+			defer func() {
+				if r := recover(); r != nil {
+					c.log.Info().Msg("Query closing deferred error and recovery")
+				}
+			}()
+			err := query.Close()
+			if err != nil {
+				fmt.Printf("Error closing statement [%s]\n", err.Error())
+			}
 		}
 	}()
 
