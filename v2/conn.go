@@ -71,8 +71,8 @@ type Connection struct {
 	log           *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
-	Status        ConnStatus
-	lock          *sync.Mutex
+	// Status        ConnStatus
+	lock *sync.Mutex
 }
 
 // Param used to Select / Exec a statement
@@ -142,10 +142,10 @@ func NewConnection(constr string, name string, configuration *ConnectionConfigur
 	log.Info().Msgf("+++ Nuevo pool de Conexiones [%v] creado", name)
 	// returning connection
 	return &Connection{
-		Name:          name,
-		conn:          conn,
-		ConStr:        constr,
-		Status:        ConnOpened,
+		Name:   name,
+		conn:   conn,
+		ConStr: constr,
+		// Status:        ConnOpened,
 		Configuration: configuration,
 		log:           log,
 		lock:          &sync.Mutex{},
@@ -207,12 +207,12 @@ func Parser[T any](source Result) (T, error) {
 }
 
 // GetConnectionStatus return the actual status of a connection
-func (c *Connection) GetConnectionStatus() (status ConnStatus) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	status = c.Status
-	return
-}
+//func (c *Connection) GetConnectionStatus() (status ConnStatus) {
+//	c.lock.Lock()
+//	defer c.lock.Unlock()
+//	status = c.Status
+//	return
+//}
 
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
@@ -235,17 +235,17 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		}
 	}
 
-	if c.GetConnectionStatus() == ConnClosed {
-		err := c.ReConnect()
-		if err != nil {
-			c.log.Err(err).Msg("Error realizando ReConnect a la conexión")
-			return Result{
-				Error:           err,
-				RecordsAffected: 0,
-				HasData:         false,
-			}
-		}
-	}
+	//if c.GetConnectionStatus() == ConnClosed {
+	//	err := c.ReConnect()
+	//	if err != nil {
+	//		c.log.Err(err).Msg("Error realizando ReConnect a la conexión")
+	//		return Result{
+	//			Error:           err,
+	//			RecordsAffected: 0,
+	//			HasData:         false,
+	//		}
+	//	}
+	//}
 
 	// ***********************************************
 	// Build Param List
@@ -398,16 +398,24 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 	// ***********************************************
 	// Evaluando conexión
 	// ***********************************************
-	if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
-		err := c.ReConnect()
-		if err != nil {
-			return Result{
-				Error:           err,
-				RecordsAffected: 0,
-				HasData:         false,
-			}
+
+	if err := c.Ping(); err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
 		}
 	}
+
+	//if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
+	//	err := c.ReConnect()
+	//	if err != nil {
+	//		return Result{
+	//			Error:           err,
+	//			RecordsAffected: 0,
+	//			HasData:         false,
+	//		}
+	//	}
+	//}
 
 	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	// defer cancel()
@@ -518,7 +526,7 @@ func (c *Connection) Rollback() error {
 // Close closes the current connection
 func (c *Connection) Close() {
 	// TODO: remove c.Status field
-	c.Status = ConnClosed
+	// c.Status = ConnClosed
 	err := c.conn.Close()
 	if err != nil {
 		fmt.Printf("Error closing connection [%s]", err.Error())
@@ -537,14 +545,14 @@ func (c *Connection) Ping() error {
 	// ping connection
 	err := c.conn.PingContext(ctx)
 	if err != nil {
-		c.lock.Lock()
-		defer c.lock.Unlock()
-		c.Status = ConnClosed
+		// c.lock.Lock()
+		// defer c.lock.Unlock()
+		// c.Status = ConnClosed
 		return CantPingConnection(err.Error())
 	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.Status = ConnOpened
+	// c.lock.Lock()
+	// defer c.lock.Unlock()
+	// c.Status = ConnOpened
 	return nil
 }
 
@@ -553,31 +561,42 @@ func (c *Connection) ReConnect() error {
 	// WARNING: evaluate the fact ReConnect is generating
 	// some kind of false positive, in connection Status
 	// because could be many goroutines trying reConnect
-	if c.GetConnectionStatus() == ConnOpened {
-		err := c.Ping()
-		if err != nil {
-			c.lock.Lock()
-			defer c.lock.Unlock()
-			c.Status = ConnClosed
-			conn, err := createConnection(c.ConStr, c.Configuration, c.log)
-			if err != nil {
-				return err
-			}
-			c.Status = ConnOpened
-			c.conn = conn
-		}
-	} else {
-		c.lock.Lock()
-		defer c.lock.Unlock()
-		c.Status = ConnClosed
+
+	if err := c.Ping(); err != nil {
 		conn, err := createConnection(c.ConStr, c.Configuration, c.log)
 		if err != nil {
 			return err
 		}
-		c.Status = ConnOpened
 		c.conn = conn
 	}
+
 	return nil
+
+	//if c.GetConnectionStatus() == ConnOpened {
+	//	err := c.Ping()
+	//	if err != nil {
+	//		c.lock.Lock()
+	//		defer c.lock.Unlock()
+	//		c.Status = ConnClosed
+	//		conn, err := createConnection(c.ConStr, c.Configuration, c.log)
+	//		if err != nil {
+	//			return err
+	//		}
+	//		c.Status = ConnOpened
+	//		c.conn = conn
+	//	}
+	//} else {
+	//	c.lock.Lock()
+	//	defer c.lock.Unlock()
+	//	c.Status = ConnClosed
+	//	conn, err := createConnection(c.ConStr, c.Configuration, c.log)
+	//	if err != nil {
+	//		return err
+	//	}
+	//	c.Status = ConnOpened
+	//	c.conn = conn
+	//}
+	//return nil
 }
 
 // GetConnection creates and individual connection
@@ -601,15 +620,19 @@ func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err err
 		}
 	}()
 
+	if err = c.Ping(); err != nil {
+		return nil, err
+	}
+
 	// -----------------------------------------------
 	// Evaluando conexión
 	// -----------------------------------------------
-	if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
-		err = c.ReConnect()
-		if err != nil {
-			return nil, err
-		}
-	}
+	//if c.GetConnectionStatus() == ConnClosed || c.Ping() != nil {
+	//	err = c.ReConnect()
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//}
 
 	stmt, err = c.conn.Prepare(statement)
 	if err != nil {
