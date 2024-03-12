@@ -452,6 +452,12 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
+	if err != nil || query == nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
 	// defer closing statement
 	defer func() {
 		if query != nil {
