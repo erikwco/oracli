@@ -245,7 +245,7 @@ func (c *Connection) SelectClob(stmt string, params []*Param) Result {
 			Error:           nil,
 			RecordsAffected: 1,
 			HasData:         true,
-			Data:            data.String,
+			ClobString:      data.String,
 		}
 
 	}
@@ -345,7 +345,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// -----------------------------------------------
 			// unwrap rows and return
 			// -----------------------------------------------
-			records, err := c.unwrapRowsSql(rows)
+			records, err := c.unwrapRows(rows)
 			rowsAffected := 0
 			if err == nil {
 				rowsAffected = len(records.Data)
