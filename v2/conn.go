@@ -204,6 +204,85 @@ func Parser[T any](source Result) (T, error) {
 	return data, nil
 }
 
+func (c *Connection) SelectClob(stmt string, params []*Param) Result {
+	c.log.Info().Msgf("+++ Hit SelectClob for [%v]", stmt)
+	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
+
+	err := c.Ping()
+	if err != nil {
+		c.log.Err(err).Msg("Error validando conexión")
+		return Result{
+			Error:           errors.New("Ocurrio un error validando la conexión"),
+			RecordsAffected: 0,
+			HasData:         false,
+		}
+	}
+
+	p := buildParamsList(params)
+	if p.isRef {
+		_, err := c.conn.Exec(stmt, p.values...)
+		if err != nil {
+			c.log.Err(err).Msg("Error ejecutando el statement")
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+			}
+		}
+
+		// -----------------------------------------------
+		// validate cursor information
+		// -----------------------------------------------
+		if p.cursor != nil {
+			// -----------------------------------------------
+			// defer closing cursor
+			// -----------------------------------------------
+			defer func(cursor *goOra.RefCursor) {
+				c.log.Debug().Msg("Closing cursor on deferred function - Select - Ref")
+				if cursor != nil {
+					err := cursor.Close()
+					if err != nil {
+						c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
+					}
+				}
+			}(p.cursor)
+
+			// -----------------------------------------------
+			// running through query
+			// -----------------------------------------------
+			rows, err := goOra.WrapRefCursor(context.Background(), c.conn, p.cursor)
+			if err != nil {
+				c.log.Err(err).Msg("Error ejecutando el cursor")
+				return Result{
+					Error:           err,
+					RecordsAffected: 0,
+				}
+			}
+
+			// returning Result with cursor
+			return Result{
+				Error:           nil,
+				HasData:         true,
+				RecordsAffected: 1,
+				Cursor:          rows,
+			}
+
+		}
+
+		return Result{
+			Error:           errors.New("El cursor de datos es nulo"),
+			RecordsAffected: 0,
+			HasData:         false,
+		}
+
+	}
+
+	return Result{
+		Error:           errors.New("El tipo de consulta no devuelve CLOB"),
+		RecordsAffected: 0,
+		HasData:         false,
+	}
+}
+
 // Select takes a statement that could be a plain select or a procedure with
 // ref-cursor return parameter and wrap in Result object
 // Parameters:
@@ -238,7 +317,6 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// -----------------------------------------------
 		// execute statement
 		// -----------------------------------------------
-		fmt.Println(stmt)
 		_, err := c.conn.Exec(stmt, p.values...)
 		if err != nil {
 			c.log.Err(err).Msg("Error ejecutando el statement")
@@ -256,6 +334,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// defer closing cursor
 			// -----------------------------------------------
 			defer func(cursor *goOra.RefCursor) {
+				c.log.Debug().Msg("Closing cursor on deferred function - Select - Ref")
 				if cursor != nil {
 					err := cursor.Close()
 					if err != nil {
@@ -267,8 +346,11 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// -----------------------------------------------
 			// running through query
 			// -----------------------------------------------
+			// NOTE: as showed in sijms/go-ora examples this need to be changed by
+			// go_ora.WrapRefCursor instead of p.cursor.Query
 
-			rows, err := p.cursor.Query()
+			// rows, err := p.cursor.Query()
+			rows, err := goOra.WrapRefCursor(context.Background(), c.conn, p.cursor)
 			if err != nil {
 				c.log.Err(err).Msg("Error ejecutando el cursor")
 				return Result{
@@ -279,6 +361,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 
 			// defer closing rows
 			defer func() {
+				c.log.Debug().Msg("Closing rows on deferred function - Select - Rows")
 				err := rows.Close()
 				if err != nil {
 					c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
