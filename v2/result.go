@@ -1,5 +1,16 @@
 package oracli
 
+import (
+	"database/sql"
+
+	goOra "github.com/sijms/go-ora/v2"
+)
+
+type (
+	Cursor   *sql.Rows
+	ClobType goOra.Clob
+)
+
 // Record result from unwrap goOra result
 type Record map[string]any
 
@@ -14,4 +25,5 @@ type Result struct {
 	Error           error
 	RecordsAffected int64
 	HasData         bool
+	Cursor          Cursor
 }
