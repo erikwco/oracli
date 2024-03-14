@@ -14,5 +14,5 @@ type Result struct {
 	Error           error
 	RecordsAffected int64
 	HasData         bool
-	Data            string
+	ClobString      string
 }
