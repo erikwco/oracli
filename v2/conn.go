@@ -345,7 +345,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// -----------------------------------------------
 			// unwrap rows and return
 			// -----------------------------------------------
-			records, err := c.unwrapRows(rows)
+			records, err := c.unwrapRowsSql(rows)
 			rowsAffected := 0
 			if err == nil {
 				rowsAffected = len(records.Data)
