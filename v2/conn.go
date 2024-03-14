@@ -47,6 +47,7 @@ const (
 	Input ParameterDirection = iota
 	Output
 	InOut
+	Clob
 )
 
 func (p ParameterDirection) String() string {
@@ -87,6 +88,7 @@ type Param struct {
 type params struct {
 	values []any
 	isRef  bool
+	isClob bool
 	cursor *goOra.RefCursor
 }
 
@@ -191,6 +193,16 @@ func (c *Connection) NewCursorParam(name string) *Param {
 	}
 }
 
+func (c *Connection) NewClobParam(name string) *Param {
+	return &Param{
+		Name:      name,
+		Value:     "",
+		Size:      100000,
+		Direction: Clob,
+		IsRef:     false,
+	}
+}
+
 // Parser generic function to convert Result object to structure
 // Parameters:
 // @source: Result object that contains the data
@@ -218,8 +230,8 @@ func (c *Connection) SelectClob(stmt string, params []*Param) Result {
 		}
 	}
 
-	p := buildParamsList(params)
-	if p.isRef {
+	p, data := buildParamsListWithClob(params)
+	if p.isClob {
 		_, err := c.conn.Exec(stmt, p.values...)
 		if err != nil {
 			c.log.Err(err).Msg("Error ejecutando el statement")
@@ -229,49 +241,11 @@ func (c *Connection) SelectClob(stmt string, params []*Param) Result {
 			}
 		}
 
-		// -----------------------------------------------
-		// validate cursor information
-		// -----------------------------------------------
-		if p.cursor != nil {
-			// -----------------------------------------------
-			// defer closing cursor
-			// -----------------------------------------------
-			defer func(cursor *goOra.RefCursor) {
-				c.log.Debug().Msg("Closing cursor on deferred function - Select - Ref")
-				if cursor != nil {
-					err := cursor.Close()
-					if err != nil {
-						c.log.Err(err).Msgf("Error closing statement [%s]\n", err.Error())
-					}
-				}
-			}(p.cursor)
-
-			// -----------------------------------------------
-			// running through query
-			// -----------------------------------------------
-			rows, err := goOra.WrapRefCursor(context.Background(), c.conn, p.cursor)
-			if err != nil {
-				c.log.Err(err).Msg("Error ejecutando el cursor")
-				return Result{
-					Error:           err,
-					RecordsAffected: 0,
-				}
-			}
-
-			// returning Result with cursor
-			return Result{
-				Error:           nil,
-				HasData:         true,
-				RecordsAffected: 1,
-				Cursor:          rows,
-			}
-
-		}
-
 		return Result{
-			Error:           errors.New("El cursor de datos es nulo"),
-			RecordsAffected: 0,
-			HasData:         false,
+			Error:           nil,
+			RecordsAffected: 1,
+			HasData:         true,
+			Data:            data.String,
 		}
 
 	}
@@ -697,21 +671,60 @@ func newContainer() *Container {
 // of parameters recognized by go_ora to allow replacement
 // Parameters:
 // @parameters List of parameters to convert
+func buildParamsListWithClob(parameters []*Param) (*params, *goOra.Clob) {
+	l := &params{}
+	var v []any
+	var data goOra.Clob
+
+	for _, p := range parameters {
+
+		// if direction is Clob is and output Param of type Clob
+		if p.Direction == Clob {
+			l.isClob = true
+			v = append(v, goOra.Out{Dest: &data, Size: p.Size})
+			continue
+		}
+
+		v = append(v, p.Value)
+	}
+
+	l.values = v
+
+	return l, &data
+}
+
+// buildParamsList takes a list of @Param and convert to a object
+// of parameters recognized by go_ora to allow replacement
+// Parameters:
+// @parameters List of parameters to convert
 func buildParamsList(parameters []*Param) *params {
 	l := &params{}
 	var v []any
 	var cursor goOra.RefCursor
+	var data goOra.Clob
 
 	for _, p := range parameters {
+
+		// for cursors a goOra.RefCursor is neeeded
 		if p.IsRef {
 			l.isRef = true
 			l.cursor = &cursor
-			v = append(v, sql.Out{Dest: l.cursor})
+			v = append(v, goOra.Out{Dest: l.cursor})
 			continue
 		}
+
+		// if direction is Clob is and output Param of type Clob
+		if p.Direction == Clob {
+			l.isClob = true
+			v = append(v, goOra.Out{Dest: &data, Size: p.Size})
+			continue
+		}
+
 		v = append(v, p.Value)
 	}
+
 	l.values = v
+
 	return l
 }
 
