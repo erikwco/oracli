@@ -232,7 +232,10 @@ func (c *Connection) SelectClob(stmt string, params []*Param) Result {
 
 	p, data := buildParamsListWithClob(params)
 	if p.isClob {
-		_, err := c.conn.Exec(stmt, p.values...)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := c.conn.ExecContext(ctx, stmt, p.values...)
 		if err != nil {
 			c.log.Err(err).Msg("Error ejecutando el statement")
 			return Result{
@@ -291,7 +294,9 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// -----------------------------------------------
 		// execute statement
 		// -----------------------------------------------
-		_, err := c.conn.Exec(stmt, p.values...)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, err := c.conn.ExecContext(ctx, stmt, p.values...)
 		if err != nil {
 			c.log.Err(err).Msg("Error ejecutando el statement")
 			return Result{
@@ -389,7 +394,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// -----------------------------------------------
 		// running select
 		// -----------------------------------------------
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
@@ -442,7 +447,9 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 		}
 	}
 
-	result, err := c.conn.Exec(stmt)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result, err := c.conn.ExecContext(ctx, stmt)
 	if err != nil {
 		return Result{
 			Error:           err,
@@ -502,7 +509,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// execute statement
@@ -623,7 +630,10 @@ func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err err
 		return nil, err
 	}
 
-	stmt, err = c.conn.Prepare(statement)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	stmt, err = c.conn.PrepareContext(ctx, statement)
 	if err != nil {
 		return nil, err
 	}
