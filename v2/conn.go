@@ -233,7 +233,7 @@ func (c *Connection) SelectClob(stmt string, params []*Param) Result {
 	p, data := buildParamsListWithClob(params)
 	if p.isClob {
 
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		_, err := c.conn.ExecContext(ctx, stmt, p.values...)
 		if err != nil {
@@ -294,7 +294,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// -----------------------------------------------
 		// execute statement
 		// -----------------------------------------------
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		_, err := c.conn.ExecContext(ctx, stmt, p.values...)
 		if err != nil {
@@ -394,7 +394,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 		// -----------------------------------------------
 		// running select
 		// -----------------------------------------------
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		rows, err := query.QueryContext(ctx, p.values...)
 		if err != nil {
@@ -447,7 +447,7 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	result, err := c.conn.ExecContext(ctx, stmt)
 	if err != nil {
@@ -509,7 +509,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	// execute statement
@@ -630,7 +630,7 @@ func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err err
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	stmt, err = c.conn.PrepareContext(ctx, statement)
