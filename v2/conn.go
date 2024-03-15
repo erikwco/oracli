@@ -510,11 +510,10 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
+	ctxQuery, cancelQuery := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancelQuery()
 	// execute statement
-	rows, err := query.ExecContext(ctx, p.values...)
+	rows, err := query.ExecContext(ctxQuery, p.values...)
 	if err != nil {
 		c.log.Err(err).Msg("\t ... (Exec) Error Executing Query")
 		return Result{
