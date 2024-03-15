@@ -483,6 +483,14 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 		c.log.Info().Msgf("+++ Param [%v] - Value [%v]", p.Name, p.Value)
 	}
 
+	if err := c.Ping(); err != nil {
+		c.log.Err(err).Msgf("\t ... (Exec) la conexión se cerro para [%v]", stmt)
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
+
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
 	if err != nil || query == nil {
