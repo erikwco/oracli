@@ -476,6 +476,32 @@ func (c *Connection) ExecuteDDL(stmt string) Result {
 // Parameters:
 // @stmt Statement to execute
 // @params List of parameters to replace in @statement
+func (c *Connection) EnsureExec(stmt string, params []*Param, retries int) (result Result) {
+	counter := 0
+
+retryLoop:
+	for i := 0; i < retries; i++ {
+
+		result := c.Exec(stmt, params)
+		if result.Error != nil {
+			counter++
+			if counter >= retries {
+				return result
+			}
+			continue
+		}
+
+		break retryLoop
+	}
+
+	return
+}
+
+// Exec used to execute non-returnable DML as insert, update, delete
+// or a procedure without return values
+// Parameters:
+// @stmt Statement to execute
+// @params List of parameters to replace in @statement
 func (c *Connection) Exec(stmt string, params []*Param) Result {
 	c.log.Info().Msgf("+++ Hit Exec for  [%v]", stmt)
 	c.log.Info().Msgf("+++ number of paramters [%v]", len(params))
