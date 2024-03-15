@@ -486,6 +486,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// prepare statement
 	query, err := c.prepareStatement(stmt)
 	if err != nil || query == nil {
+		c.log.Err(err).Msg("\t ... (Exec) prepareStatement error")
 		return Result{
 			Error:           err,
 			RecordsAffected: 0,
@@ -515,6 +516,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// execute statement
 	rows, err := query.ExecContext(ctx, p.values...)
 	if err != nil {
+		c.log.Err(err).Msg("\t ... (Exec) Error Executing Query")
 		return Result{
 			Error:           err,
 			RecordsAffected: 0,
@@ -621,6 +623,7 @@ func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err err
 	// stmt and error must be filled with nil, and recover as error
 	defer func() {
 		if r := recover(); r != nil {
+			c.log.Error().Msgf("Panic detected on prepareStatement :: %v", r.(error))
 			stmt = nil
 			err = r.(error)
 		}
