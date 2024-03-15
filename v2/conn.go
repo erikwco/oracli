@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/mitchellh/mapstructure"
@@ -29,13 +28,11 @@ type Connector interface {
 // ConnStatus exposes connection status
 type ConnStatus int
 
-// Connection status
 const (
 	ConnClosed ConnStatus = iota
 	ConnOpened
 )
 
-// String allow string conversion to ConnStatus
 func (cs ConnStatus) String() string {
 	return [...]string{"ConnClosed", "ConnOpened", "ConnError"}[cs]
 }
@@ -72,7 +69,6 @@ type Connection struct {
 	log           *zerolog.Logger
 	conn          *sql.DB
 	tx            driver.Tx
-	lock          *sync.Mutex
 }
 
 // Param used to Select / Exec a statement
@@ -148,8 +144,139 @@ func NewConnection(constr string, name string, configuration *ConnectionConfigur
 		ConStr:        constr,
 		Configuration: configuration,
 		log:           log,
-		lock:          &sync.Mutex{},
 	}, nil
+}
+
+// ConfigureConnection creates a base connection object, this must be completed with BuildConnection
+// when all parameters are set
+// Parameters:
+// @server: Server Address - name or ip
+// @port: Connection port
+// @user: User name
+// @password: password
+// @name: Connection name
+// @serviceAsSID: If true service is used as SID
+// @service: Service Name for Oracle connection if SID is needed use @options
+// @options: specified some options like TRACE, SID or conStr etc.
+// @log: In this version *zerolog.Logger is required
+func ConfigureConnection(server string, port int, user, password, service, name string, serviceAsSID bool, options map[string]string, log *zerolog.Logger) *Connection {
+	log.Info().Msg("+++ hit ConfigureConnection")
+
+	// Default Configuration for Connection
+	conf := ConnectionConfiguration{
+		MaxOpenConnections:    20,
+		MaxIdleConnections:    10,
+		ContextTimeout:        30,
+		MaxConnectionLifeTime: 10 * time.Minute,
+		MaxIdleConnectionTime: 5 * time.Minute,
+		ConfigurationSet:      true,
+	}
+
+	// Is Service must be used as SID this is configured as options
+	if serviceAsSID {
+		if options == nil {
+			options = make(map[string]string)
+		}
+		options["SID"] = service
+	}
+
+	// Build Connection String
+	constr := goOra.BuildUrl(server, port, service, user, password, options)
+
+	// return base Connection
+	return &Connection{
+		Name:          name,
+		ConStr:        constr,
+		Configuration: &conf,
+		log:           log,
+	}
+}
+
+func (c *Connection) WithMaxOpenConnections(maxOpenConnections int) *Connection {
+	c.log.Info().Msg("+++ hit WithMaxOpenConnections")
+	c.Configuration.MaxOpenConnections = maxOpenConnections
+	return c
+}
+
+func (c *Connection) WithMaxIdleConnections(maxIdleConnections int) *Connection {
+	c.log.Info().Msg("+++ hit WithMaxIdleConnections")
+	c.Configuration.MaxIdleConnections = maxIdleConnections
+	return c
+}
+
+func (c *Connection) WithContextTimeout(contextTimeout int) *Connection {
+	c.log.Info().Msg("+++ hit WithContextTimeout")
+	c.Configuration.ContextTimeout = contextTimeout
+	return c
+}
+
+func (c *Connection) WithMaxConnectionLifeTime(maxConnectionLifeTime time.Duration) *Connection {
+	c.log.info().Msg("+++ hit WithMaxConnectionLifeTime")
+	c.Configuration.MaxConnectionLifeTime = maxConnectionLifeTime
+	return c
+}
+
+func (c *Connection) WithMaxIdleConnectionTime(maxIdleConnectionTime time.Duration) *Connection {
+	c.log.Info().Msg("+++ hit WithMaxIdleConnectionTime")
+	c.Configuration.MaxIdleConnectionTime = maxIdleConnectionTime
+	return c
+}
+
+func (c *Connection) BuildConnection() (*Connection, error) {
+	c.log.Info().Msg("+++ hit BuildConnection")
+	conn, err := createConnection(c.ConStr, c.Configuration, c.log)
+	if err != nil {
+		return nil, err
+	}
+	c.conn = conn
+	return c, nil
+}
+
+// createConnection takes all the parameters a construct a new connection object to reuse as pool
+// Parameters:
+// @constr ConnectionString
+// @configuration All The configurations that affect how the pool behaves
+// @log Log object provided to write into unified log
+func createConnection(constr string, configuration *ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
+	// Open connection via sql.Open interface
+	conn, err := sql.Open("oracle", constr)
+	if err != nil {
+		return nil, CantCreateConnErr(err.Error())
+	}
+
+	// context timeout
+	timeout := time.Duration(30) * time.Second
+
+	if configuration != nil {
+		if configuration.ConfigurationSet {
+
+			log.Info().Msg(" ----------------------------------------  ")
+			log.Info().Msgf(" ... ConfigurationSet : %v", configuration.ConfigurationSet)
+			log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
+			log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
+			log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
+			log.Info().Msgf(" ... MaxIdleConnectionTime : %v", configuration.MaxIdleConnectionTime)
+			log.Info().Msg(" ----------------------------------------  ")
+
+			conn.SetMaxOpenConns(configuration.MaxOpenConnections)
+			conn.SetMaxIdleConns(configuration.MaxIdleConnections)
+			conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
+			conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
+			timeout = time.Duration(configuration.ContextTimeout) * time.Second
+		}
+	}
+
+	// test connection
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// ping connection
+	err = conn.PingContext(ctx)
+	if err != nil {
+		return nil, CantPingConnection(fmt.Sprintf("PingContext %v", err.Error()))
+	}
+
+	return conn, nil
 }
 
 // NewInOutParam creates and fill a new InOut Parameter
@@ -678,102 +805,6 @@ func (c *Connection) prepareStatement(statement string) (stmt *sql.Stmt, err err
 	return
 }
 
-// addToRows take the rows from the result and append the result
-// to Container.Data
-func (c *Container) addToRows(columns []string, rows []any) {
-	// if full create a new one before add new one
-	if len(c.Data) == cap(c.Data) {
-		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
-		copy(expanded, c.Data)
-		c.Data = expanded
-	}
-	// add new data
-	c.Data = append(c.Data, unwrapToRecord(columns, rows))
-}
-
-// addToRowsString take rows and columns to create a rowString
-// Parameters:
-// @columns list of columns
-// @rows list of rows
-func (c *Container) addToRowsString(columns []string, rows []string) {
-	// if full create a new one before add new one
-	if len(c.Data) == cap(c.Data) {
-		expanded := make([]Record, len(c.Data), cap(c.Data)+1)
-		copy(expanded, c.Data)
-		c.Data = expanded
-	}
-	// add new data
-	c.Data = append(c.Data, unwrapToRecordString(columns, rows))
-}
-
-// newContainer creates a new Container
-func newContainer() *Container {
-	return &Container{
-		Data: make([]Record, 0, 1),
-	}
-}
-
-// buildParamsList takes a list of @Param and convert to a object
-// of parameters recognized by go_ora to allow replacement
-// Parameters:
-// @parameters List of parameters to convert
-func buildParamsListWithClob(parameters []*Param) (*params, *goOra.Clob) {
-	l := &params{}
-	var v []any
-	var data goOra.Clob
-
-	for _, p := range parameters {
-
-		// if direction is Clob is and output Param of type Clob
-		if p.Direction == Clob {
-			l.isClob = true
-			v = append(v, goOra.Out{Dest: &data, Size: p.Size})
-			continue
-		}
-
-		v = append(v, p.Value)
-	}
-
-	l.values = v
-
-	return l, &data
-}
-
-// buildParamsList takes a list of @Param and convert to a object
-// of parameters recognized by go_ora to allow replacement
-// Parameters:
-// @parameters List of parameters to convert
-func buildParamsList(parameters []*Param) *params {
-	l := &params{}
-	var v []any
-	var cursor goOra.RefCursor
-	var data goOra.Clob
-
-	for _, p := range parameters {
-
-		// for cursors a goOra.RefCursor is neeeded
-		if p.IsRef {
-			l.isRef = true
-			l.cursor = &cursor
-			v = append(v, goOra.Out{Dest: l.cursor})
-			continue
-		}
-
-		// if direction is Clob is and output Param of type Clob
-		if p.Direction == Clob {
-			l.isClob = true
-			v = append(v, goOra.Out{Dest: &data, Size: p.Size})
-			continue
-		}
-
-		v = append(v, p.Value)
-	}
-
-	l.values = v
-
-	return l
-}
-
 // unwrapRows take *goOra.DataSet and convert to Container
 // Parameters:
 // @rows representative object for rows (*goOra.DataSet)
@@ -857,75 +888,4 @@ func (c *Connection) unwrapRowsSql(rows *sql.Rows) (*Container, error) {
 
 	// returning data
 	return container, nil
-}
-
-// unwrapToRecord take every row and create a new Record
-// Parameters:
-// @columns Every column in the DataSet
-// @values Every value in the DataSet
-func unwrapToRecord(columns []string, values []any) Record {
-	r := make(Record)
-	for i, c := range values {
-		r[columns[i]] = c
-	}
-	return r
-}
-
-// unwrapToRecord take every row and create a new Record
-// Parameters:
-// @columns Every column in the DataSet
-// @values Every value in the Dataset (as string)
-func unwrapToRecordString(columns []string, values []string) Record {
-	r := make(Record)
-	for i, c := range values {
-		r[columns[i]] = c
-	}
-	return r
-}
-
-// createConnection takes all the parameters a construct a new connection object to reuse as pool
-// Parameters:
-// @constr ConnectionString
-// @configuration All The configurations that affect how the pool behaves
-// @log Log object provided to write into unified log
-func createConnection(constr string, configuration *ConnectionConfiguration, log *zerolog.Logger) (*sql.DB, error) {
-	// Open connection via sql.Open interface
-	conn, err := sql.Open("oracle", constr)
-	if err != nil {
-		return nil, CantCreateConnErr(err.Error())
-	}
-
-	// context timeout
-	timeout := time.Duration(30) * time.Second
-
-	if configuration != nil {
-		if configuration.ConfigurationSet {
-
-			log.Info().Msg(" ----------------------------------------  ")
-			log.Info().Msgf(" ... ConfigurationSet : %v", configuration.ConfigurationSet)
-			log.Info().Msgf(" ... MaxOpenConnections : %v", configuration.MaxOpenConnections)
-			log.Info().Msgf(" ... MaxIdleConnections : %v", configuration.MaxIdleConnections)
-			log.Info().Msgf(" ... MaxConnectionLifeTime : %v", configuration.MaxConnectionLifeTime)
-			log.Info().Msgf(" ... MaxIdleConnectionTime : %v", configuration.MaxIdleConnectionTime)
-			log.Info().Msg(" ----------------------------------------  ")
-
-			conn.SetMaxOpenConns(configuration.MaxOpenConnections)
-			conn.SetMaxIdleConns(configuration.MaxIdleConnections)
-			conn.SetConnMaxLifetime(configuration.MaxConnectionLifeTime)
-			conn.SetConnMaxIdleTime(configuration.MaxIdleConnectionTime)
-			timeout = time.Duration(configuration.ContextTimeout) * time.Second
-		}
-	}
-
-	// test connection
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	// ping connection
-	err = conn.PingContext(ctx)
-	if err != nil {
-		return nil, CantPingConnection(fmt.Sprintf("PingContext %v", err.Error()))
-	}
-
-	return conn, nil
 }
