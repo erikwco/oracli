@@ -211,7 +211,7 @@ func (c *Connection) WithContextTimeout(contextTimeout int) *Connection {
 }
 
 func (c *Connection) WithMaxConnectionLifeTime(maxConnectionLifeTime time.Duration) *Connection {
-	c.log.info().Msg("+++ hit WithMaxConnectionLifeTime")
+	c.log.Info().Msg("+++ hit WithMaxConnectionLifeTime")
 	c.Configuration.MaxConnectionLifeTime = maxConnectionLifeTime
 	return c
 }
