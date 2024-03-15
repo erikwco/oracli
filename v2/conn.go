@@ -515,7 +515,7 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// execute statement
 	rows, err := query.ExecContext(ctxQuery, p.values...)
 	if err != nil {
-		c.log.Err(err).Msg("\t ... (Exec) Error Executing Query")
+		c.log.Err(err).Msgf("\t ... (Exec) Error Executing Query: [%v]", stmt)
 		return Result{
 			Error:           err,
 			RecordsAffected: 0,
