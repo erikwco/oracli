@@ -160,6 +160,7 @@ func NewConnection(constr string, name string, configuration *ConnectionConfigur
 // @options: specified some options like TRACE, SID or conStr etc.
 // @log: In this version *zerolog.Logger is required
 func ConfigureConnection(server string, port int, user, password, service, name string, serviceAsSID bool, options map[string]string, log *zerolog.Logger) *Connection {
+	// TODO: evaluate to remove *zerolog.logger by generic interface
 	log.Info().Msg("+++ hit ConfigureConnection")
 
 	// Default Configuration for Connection
@@ -301,7 +302,7 @@ func (c *Connection) NewParam(name string, value driver.Value) *Param {
 	return &Param{
 		Name:      name,
 		Value:     value,
-		Size:      100,
+		Size:      1000,
 		Direction: Input,
 		IsRef:     false,
 	}
