@@ -639,9 +639,12 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 
 	if err := c.Ping(); err != nil {
 		c.log.Err(err).Msgf("\t ... (Exec) la conexión se cerro para [%v]", stmt)
-		return Result{
-			Error:           err,
-			RecordsAffected: 0,
+		err = c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+			}
 		}
 	}
 
