@@ -627,6 +627,62 @@ retryLoop:
 
 // Exec used to execute non-returnable DML as insert, update, delete
 // or a procedure without return values
+func (c *Connection) ExecLegacy(stmt string, params []*Param) Result {
+	// ***********************************************
+	// Evaluando conexión
+	// ***********************************************
+	if c.Ping() != nil {
+		err := c.ReConnect()
+		if err != nil {
+			return Result{
+				Error:           err,
+				RecordsAffected: 0,
+				HasData:         false,
+			}
+		}
+	}
+
+	// prepare statement
+	query, err := c.prepareStatement(stmt)
+	// defer closing statement
+	defer func() {
+		err := query.Close()
+		if err != nil {
+			fmt.Printf("Error closing statement [%s]\n", err.Error())
+		}
+	}()
+
+	// parse params
+	p := buildParamsList(params)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// execute statement
+	rows, err := query.ExecContext(ctx, p.values...)
+	if err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
+
+	rowsAffected, err := rows.RowsAffected()
+	if err != nil {
+		return Result{
+			Error:           err,
+			RecordsAffected: 0,
+		}
+	}
+	return Result{
+		RecordsAffected: rowsAffected,
+		Error:           nil,
+		HasData:         rowsAffected > 0,
+	}
+}
+
+// Exec used to execute non-returnable DML as insert, update, delete
+// or a procedure without return values
 // Parameters:
 // @stmt Statement to execute
 // @params List of parameters to replace in @statement
@@ -675,10 +731,11 @@ func (c *Connection) Exec(stmt string, params []*Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
-	ctxQuery, cancelQuery := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancelQuery()
+	// ctxQuery, cancelQuery := context.WithTimeout(context.Background(), 120*time.Second)
+	// defer cancelQuery()
 	// execute statement
-	rows, err := query.ExecContext(ctxQuery, p.values...)
+	rows, err := query.Exec(p.values...)
+	// rows, err := query.ExecContext(ctxQuery, p.values...)
 	if err != nil {
 		c.log.Err(err).Msgf("\t ... (Exec) Error Executing Query: [%v]", stmt)
 		return Result{
