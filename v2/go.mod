@@ -4,8 +4,8 @@ go 1.22
 
 require (
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/sijms/go-ora/v2 v2.8.9
 	github.com/rs/zerolog v1.32.0
+	github.com/sijms/go-ora/v2 v2.7.8
 )
 
 require (
