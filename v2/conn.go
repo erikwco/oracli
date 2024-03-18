@@ -456,8 +456,8 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// NOTE: as showed in sijms/go-ora examples this need to be changed by
 			// go_ora.WrapRefCursor instead of p.cursor.Query
 
-			// rows, err := p.cursor.Query()
-			rows, err := goOra.WrapRefCursor(context.Background(), c.conn, p.cursor)
+			rows, err := p.cursor.Query()
+			// rows, err := goOra.WrapRefCursor(context.Background(), c.conn, p.cursor)
 			if err != nil {
 				c.log.Err(err).Msg("Error ejecutando el cursor")
 				return Result{
@@ -478,7 +478,7 @@ func (c *Connection) Select(stmt string, params []*Param) Result {
 			// -----------------------------------------------
 			// unwrap rows and return
 			// -----------------------------------------------
-			records, err := c.unwrapRowsSql(rows)
+			records, err := c.unwrapRows(rows)
 			rowsAffected := 0
 			if err == nil {
 				rowsAffected = len(records.Data)
