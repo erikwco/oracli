@@ -655,11 +655,12 @@ func (c *Connection) ExecLegacy(stmt string, params []*Param) Result {
 	// parse params
 	p := buildParamsList(params)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// defer cancel()
 
 	// execute statement
-	rows, err := query.ExecContext(ctx, p.values...)
+	// rows, err := query.ExecContext(ctx, p.values...)
+	rows, err := query.Exec(p.values...)
 	if err != nil {
 		return Result{
 			Error:           err,
